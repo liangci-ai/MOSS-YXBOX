@@ -1,0 +1,25 @@
+[project]
+name = "moss-yxbox"
+version = "1.0.1"
+description = "把 ComfyUI 官方「创建边界框」与「MOSS-Image 布局提示词」融合成单节点的中文画布排版工作台"
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+keywords = ["comfyui", "comfyui-nodes", "moss-image", "layout", "bounding-box"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/liangci-ai/MOSS-YXBOX"
+"Bug Tracker" = "https://github.com/liangci-ai/MOSS-YXBOX/issues"
+"Release Notes" = "https://github.com/liangci-ai/MOSS-YXBOX/releases"
+
+# ComfyUI Registry（让 ComfyUI Manager 能按名字搜到并安装）
+[tool.comfy]
+PublisherId = "liangci-ai"
+DisplayName = "MOSS YXBOX 控图排版"
+Icon = "https://raw.githubusercontent.com/liangci-ai/MOSS-YXBOX/main/docs/preview.png"

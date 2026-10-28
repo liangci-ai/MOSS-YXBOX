@@ -1,0 +1,26 @@
+name: 功能建议
+description: 想要的新能力，或希望改掉的交互
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: 想解决什么问题
+      description: 先说场景和痛点，再说你想的解法，比只写一句「加个按钮」有用得多
+      placeholder: |
+        场景：我一次要排 20 多个框……
+        痛点：现在只能一个个拖……
+        想法：能不能在列表里框选多行后批量改颜色
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 现在怎么绕过去的
+      description: 可选，但能帮判断优先级
+  - type: input
+    id: version
+    attributes:
+      label: 当前插件版本
+      placeholder: "v1.0.1"

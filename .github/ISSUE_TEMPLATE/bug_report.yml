@@ -1,0 +1,71 @@
+name: 问题反馈
+description: 报告 MOSS YXBOX 控图排版的 bug 或异常表现
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请尽量把下面每一项都填上，尤其是**控制台报错**和**截图**，能省掉很多来回确认。
+  - type: input
+    id: node-version
+    attributes:
+      label: 插件版本
+      description: 来自 GitHub 的 tag，或 README 里的版本号
+      placeholder: "v1.0.1"
+    validations:
+      required: true
+  - type: input
+    id: comfy-version
+    attributes:
+      label: ComfyUI 版本
+      description: 启动时控制台第一行、或界面右下角显示的版本号
+      placeholder: "例如 0.3.40 / 前端 1.16.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: 安装方式
+      options:
+        - git clone
+        - 下载 zip 解压到 custom_nodes
+        - ComfyUI Manager 安装
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从打开工作流开始，一步一步写到你看到问题的位置
+      placeholder: |
+        1. 新建工作流，添加「MOSS YXBOX 控图排版」
+        2. 画布尺寸来源选「自定义尺寸」，1024×1024
+        3. 在画布上拖出一个框
+        4. 把节点往左下角拖动
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 越具体越好（例如「列表区高度忽然塌陷成 1 行」）
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: 浏览器控制台 / ComfyUI 控制台报错
+      description: 浏览器按 F12 → Console，把红色报错整段贴进来；有 Python 端 traceback 也一并贴
+      render: shell
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图
+      description: 直接把截图拖进这个输入框即可上传

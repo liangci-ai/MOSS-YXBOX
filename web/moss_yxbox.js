@@ -1851,16 +1851,24 @@ function setup(node) {
   };
 
   // 列表内容自然高度：只按行数估，不去量 scrollHeight（量了会和 flex 收缩互相拉扯）
-  const listContent = () => Math.max(90, (rows.children.length || 1) * 31);
+  const LIST_ROW_H = 31; // 单行高度（含行间距）
+  const LIST_MIN_ROWS = 10; // 至少能完整看到 10 行，超过才出滚动条
+  const LIST_MIN_H = LIST_ROW_H * LIST_MIN_ROWS + 30; // 10 行 + 表头
+  const listContent = () => Math.max(LIST_ROW_H, (rows.children.length || 1) * LIST_ROW_H) + 30;
 
-  // 列表区最多能占多高：只看窗口高度，绝不依赖运行时测出来的容器高度
-  const listCap = () => Math.max(160, Math.round((window.innerHeight || 900) * 0.42));
+  // 列表区最多能占多高：只按窗口高度的上限和「至少 10 行」一起算，
+  // 绝不依赖运行时测出来的容器高度（那会和 flex 互相拉扯，导致抽搐）
+  const listCap = () => Math.max(LIST_MIN_H, Math.round((window.innerHeight || 900) * 0.42));
 
   const layout = () => {
     // 只设画布高度；列表区高度交给 flex（内容多就在固定空间里自己滚），
     // 不再用 JS 写 maxHeight —— 那会和容器高度互相反馈，导致整块界面抽搐。
     const height = stageHeight() + "px";
     if (stage.style.height !== height) stage.style.height = height;
+    // 行数少时不留一大块空白，行数多时至少留出 10 行的高度，再多就滚动
+    const want = Math.min(listContent(), listCap());
+    const minH = Math.max(96, want) + "px";
+    if (scroll.style.minHeight !== minH) scroll.style.minHeight = minH;
     state.layoutReady = true;
     paint();
   };

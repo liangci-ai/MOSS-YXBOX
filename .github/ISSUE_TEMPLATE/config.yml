@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用说明（README）
+    url: https://github.com/liangci-ai/MOSS-YXBOX#readme
+    about: 安装、界面说明、画布操作、背景图、尺寸来源、输出格式都在这里
+  - name: MOSS-Image 官方使用说明
+    url: https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE_ZH.md
+    about: 布局提示词本身的写法（本插件只是把它做成画布）
