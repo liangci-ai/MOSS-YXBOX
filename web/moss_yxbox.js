@@ -1126,13 +1126,16 @@ function setup(node) {
     }
     buildMenu();
     const rect = root.getBoundingClientRect();
+    const k = viewScale(root);
     menu.style.display = "block";
     const mw = menu.offsetWidth || 180;
     const mh = menu.offsetHeight || 140;
-    let left = event.clientX - rect.left;
-    let top = event.clientY - rect.top;
-    if (left + mw > rect.width - 6) left = Math.max(6, rect.width - mw - 6);
-    if (top + mh > rect.height - 6) top = Math.max(6, rect.height - mh - 6);
+    const boxW = root.clientWidth || rect.width;
+    const boxH = root.clientHeight || rect.height;
+    let left = (event.clientX - rect.left) / k;
+    let top = (event.clientY - rect.top) / k;
+    if (left + mw > boxW - 6) left = Math.max(6, boxW - mw - 6);
+    if (top + mh > boxH - 6) top = Math.max(6, boxH - mh - 6);
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
   });
@@ -1202,14 +1205,30 @@ function setup(node) {
 
   // ---------------------------------------------------------------- geometry
   // 缩放/平移只影响「显示」，不改变画布尺寸与任何坐标值
+  // 工作流整体缩放（ComfyUI 缩放视图）会给节点套 CSS transform：此时
+  // getBoundingClientRect() 给的是「视觉像素」，clientWidth/Height 才是「布局像素」。
+  // 画布内的一切坐标都必须用布局像素，否则一缩放视图，画布内容就会整体位移。
+  const viewScale = (el) => {
+    if (!el) return 1;
+    const w = el.clientWidth || 0;
+    if (!w) return 1;
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const rw = rect?.width || 0;
+    if (!rw) return 1;
+    const k = rw / w;
+    return Number.isFinite(k) && k > 0 ? k : 1;
+  };
+
   const geo = () => {
     const rect = canvas.getBoundingClientRect();
-    const cw = Math.max(1, rect.width);
-    const ch = Math.max(1, rect.height);
+    // 布局像素尺寸（不受工作流缩放影响）
+    const cw = Math.max(1, canvas.clientWidth || rect.width || 1);
+    const ch = Math.max(1, canvas.clientHeight || rect.height || 1);
+    const k = viewScale(canvas);
     const fit = Math.min(cw / S.width, ch / S.height) || 1;
     const scale = fit * (state.zoom || 1);
     return {
-      rect, cw, ch, fit, scale,
+      rect, cw, ch, k, fit, scale,
       ox: (cw - S.width * scale) / 2 + (state.panX || 0),
       oy: (ch - S.height * scale) / 2 + (state.panY || 0),
     };
@@ -1217,11 +1236,19 @@ function setup(node) {
 
   const eventPoint = (event) => {
     const g = geo();
+    // 先把鼠标的视觉坐标换算回布局像素，再减去画布内偏移
+    const k = g.k || 1;
     return {
-      x: (event.clientX - g.rect.left - g.ox) / g.scale,
-      y: (event.clientY - g.rect.top - g.oy) / g.scale,
+      x: ((event.clientX - g.rect.left) / k - g.ox) / g.scale,
+      y: ((event.clientY - g.rect.top) / k - g.oy) / g.scale,
     };
   };
+
+  // 调试/自测钩子：控制台里可直接调用换算与重绘
+  state.eventPointForTest = eventPoint;
+  state.paint = () => paint();
+  state.geo = geo;
+  state.viewScale = viewScale;
 
   const numeric = (w, fallback) => {
     const value = Number(w?.value);
@@ -2448,13 +2475,21 @@ function setup(node) {
     if (!ctx) return;
     const g = geo();
     const dpr = window.devicePixelRatio || 1;
-    const bw = Math.max(1, Math.round(g.cw * dpr));
-    const bh = Math.max(1, Math.round(g.ch * dpr));
+    // 背板分辨率按「视觉像素」给足（工作流放大时也清晰），但绘制坐标系统一用布局像素，
+    // 于是 q = 背板像素 / 布局像素；上限 4096 防止放大过头把显存打爆。
+    const k = g.k || 1;
+    const rawW = g.cw * k * dpr;
+    const rawH = g.ch * k * dpr;
+    const cap = 4096;
+    const shrink = Math.min(1, cap / Math.max(rawW, rawH));
+    const bw = Math.max(1, Math.round(rawW * shrink));
+    const bh = Math.max(1, Math.round(rawH * shrink));
     if (canvas.width !== bw || canvas.height !== bh) {
       canvas.width = bw;
       canvas.height = bh;
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const q = bw / g.cw || dpr;
+    ctx.setTransform(q, 0, 0, q, 0, 0);
     ctx.clearRect(0, 0, g.cw, g.ch);
 
     ctx.fillStyle = "#111218";
@@ -3222,8 +3257,10 @@ function setup(node) {
   canvas.addEventListener("pointermove", (event) => {
     if (state.panDrag) {
       const pan = state.panDrag;
-      const dx = event.clientX - pan.sx;
-      const dy = event.clientY - pan.sy;
+      const k = viewScale(canvas) || 1;
+      // 鼠标位移是视觉像素，平移量是布局像素 → 除以工作流缩放倍率
+      const dx = (event.clientX - pan.sx) / k;
+      const dy = (event.clientY - pan.sy) / k;
       if (!pan.moved && Math.hypot(dx, dy) < 4) return;
       pan.moved = true;
       if ((state.zoom || 1) <= 1.0005) {
@@ -3310,13 +3347,11 @@ function setup(node) {
   };
 
   // 滚轮缩放：以鼠标位置为中心，只改显示不动数据
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (state.editing) commitEdit();
+  const zoomByWheel = (event) => {
     const g = geo();
-    const px = event.clientX - g.rect.left;
-    const py = event.clientY - g.rect.top;
+    const k = g.k || 1;
+    const px = (event.clientX - g.rect.left) / k;
+    const py = (event.clientY - g.rect.top) / k;
     const cx = (px - g.ox) / g.scale;
     const cy = (py - g.oy) / g.scale;
     const factor = Math.exp(-event.deltaY * 0.0018);
@@ -3338,7 +3373,29 @@ function setup(node) {
     state.panY = clamp(py - cy * scale - (g.ch - S.height * scale) / 2, -limit, limit);
     paint();
     syncZoomBadge();
-  }, { passive: false });
+  };
+
+  // 挂在 window 的捕获阶段：ComfyUI 自己的滚轮处理（图缩放）会比画布冒泡更早拿到事件，
+  // 只有抢在捕获阶段处理，滚轮缩放才不会被前端吞掉。
+  const onWheelZoom = (event) => {
+    if (event.__yxZoomed) return;
+    if (state.modal) return;
+    const target = event.target;
+    if (target && target.closest && target.closest(".yx-list,.yx-modal,textarea,input,select")) return;
+    const rect = stage.getBoundingClientRect ? stage.getBoundingClientRect() : null;
+    if (!rect) return;
+    if (event.clientX < rect.left || event.clientX > rect.right
+      || event.clientY < rect.top || event.clientY > rect.bottom) return;
+    event.__yxZoomed = true;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    if (state.editing) commitEdit();
+    zoomByWheel(event);
+  };
+  state.wheelZoomHandler = onWheelZoom;
+  window.addEventListener?.("wheel", onWheelZoom, { capture: true, passive: false });
+  // 画布自己再挂一份：万一前端把 window 上的事件拦掉了，鼠标直接落在画布上时仍然能缩放
+  canvas.addEventListener("wheel", onWheelZoom, { passive: false });
   canvas.addEventListener("dblclick", (event) => {
     event.preventDefault();
     if (state.drawOnly) return; // 只画框模式：双击不进入文字编辑
@@ -3774,6 +3831,7 @@ function setup(node) {
     try {
       window.removeEventListener?.("pointerdown", state.proseDownHandler, true);
       window.removeEventListener?.("pointerup", state.proseUpHandler, true);
+      window.removeEventListener?.("wheel", state.wheelZoomHandler, true);
     } catch (_error) {
       // 忽略
     }
