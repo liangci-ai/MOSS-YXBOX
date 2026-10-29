@@ -52,11 +52,19 @@ const emptyLocks = (fields = FIELDS) => {
 
 const CSS = `
 .yx-root{position:relative;display:flex;flex-direction:column;gap:6px;width:100%;height:100%;box-sizing:border-box;
-  overflow:hidden;padding:6px;background:#16171c;border-radius:8px;color:#e7e7ea;font-family:inherit;}
+  overflow:hidden;padding:7px;background:linear-gradient(180deg,#191a21,#15161b 60%);border:1px solid #23252e;
+  border-radius:8px;color:#e7e7ea;font-family:inherit;}
+.yx-prose{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;}
+.yx-prose-label{font-size:11px;color:#8d90a0;letter-spacing:.3px;}
+.yx-prose-area{width:100%;box-sizing:border-box;resize:vertical;overflow:auto;min-height:48px;height:64px;
+  padding:6px 8px;border:1px solid #34363f;border-radius:7px;background:#141519;color:#e7e7ea;
+  font:inherit;font-size:12px;line-height:1.5;outline:none;}
+.yx-prose-area:focus{border-color:#3f78ff;background:#12131a;}
+.yx-prose-area::placeholder{color:#5d6070;}
 .yx-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:#c9c9d1;}
 .yx-head-label{font-size:12px;opacity:.8;}
-.yx-chip{appearance:none;border:1px solid #34363f;background:#1e1f26;color:#c9c9d1;border-radius:6px;
-  padding:2px 9px;font-size:12px;line-height:18px;cursor:pointer;}
+.yx-chip{appearance:none;border:1px solid #34363f;background:#1e1f26;color:#c9c9d1;border-radius:7px;
+  padding:3px 10px;font-size:12px;line-height:18px;cursor:pointer;transition:background .12s,border-color .12s,color .12s;}
 .yx-chip:hover{background:#262832;}
 .yx-chip.yx-active{background:#2b5fd9;border-color:#3f78ff;color:#fff;}
 .yx-chip.yx-on{background:#262832;color:#fff;border-color:#4a4d5a;}
@@ -90,6 +98,44 @@ const CSS = `
 .yx-info{font-size:11px;color:#8d90a0;border:1px dashed #34363f;border-radius:6px;padding:2px 7px;}
 .yx-info b{color:#cfd3dd;font-weight:600;}
 .yx-topbar{display:flex;gap:6px;align-items:center;padding:0 2px 4px;}
+.yx-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.yx-form{display:flex;gap:8px;align-items:center;}
+.yx-form-label{font-size:12px;color:#9aa0b0;min-width:64px;}
+.yx-input{flex:1 1 auto;min-width:120px;height:26px;background:#0f1015;color:#dfe2ea;border:1px solid #34363f;
+  border-radius:7px;padding:0 8px;font-size:12px;box-sizing:border-box;}
+.yx-input:focus{outline:none;border-color:#4a90ff;}
+.yx-select{height:26px;background:#14151b;color:#dfe2ea;border:1px solid #34363f;border-radius:7px;
+  font-size:12px;padding:0 6px;}
+.yx-check-row{display:flex;gap:8px;align-items:flex-start;width:100%;font-size:12px;color:#9aa0b0;
+  line-height:1.55;cursor:pointer;}
+.yx-check-row span{flex:1 1 auto;min-width:0;}
+.yx-check-row input{margin:2px 0 0;}
+.yx-crumb{display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:12px;color:#8d90a0;}
+.yx-crumb-btn{appearance:none;background:transparent;border:0;color:#9fc2ff;cursor:pointer;font-size:12px;
+  padding:2px 4px;border-radius:5px;}
+.yx-crumb-btn:hover{background:#22242c;}
+.yx-crumb-sep{opacity:.6;}
+.yx-body{max-height:min(52vh,520px);overflow:auto;display:flex;flex-direction:column;gap:8px;
+  border:1px solid #262932;border-radius:9px;padding:8px;background:#12131a;}
+.yx-folder-list{display:flex;flex-direction:column;gap:4px;}
+.yx-folder-row{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:7px;}
+.yx-folder-row:hover{background:#1b1d25;}
+.yx-folder-name{flex:1 1 auto;text-align:left;appearance:none;background:transparent;border:0;color:#dfe2ea;
+  font-size:12px;cursor:pointer;padding:3px 4px;border-radius:6px;}
+.yx-folder-name:hover{color:#9fc2ff;}
+.yx-mini{appearance:none;background:#1d1f27;border:1px solid #34363f;color:#b9bcc7;border-radius:6px;
+  font-size:11px;padding:2px 7px;cursor:pointer;}
+.yx-mini:hover{background:#262932;}
+.yx-mini-danger{color:#ff9d9d;border-color:#4a2b2b;}
+.yx-grid{display:grid;grid-template-columns:repeat(var(--yx-cols,3),minmax(0,1fr));gap:7px;}
+.yx-preset{position:relative;display:flex;flex-direction:column;gap:3px;padding:7px 8px;border-radius:8px;
+  background:#171922;border:1px solid #2a2d38;cursor:pointer;}
+.yx-preset:hover{border-color:#3f475c;background:#1b1e28;}
+.yx-preset.yx-picked{border-color:#3f78ff;box-shadow:0 0 0 1px rgba(63,120,255,.5);background:#1a2336;}
+.yx-preset input{margin:0;}
+.yx-preset-name{font-size:12px;color:#e6e8ef;word-break:break-all;padding-right:2px;}
+.yx-preset-meta{font-size:11px;color:#8d90a0;word-break:break-all;}
+.yx-empty{font-size:12px;color:#8d90a0;margin:2px 0;}
 .yx-modal{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.62);
   display:flex;align-items:center;justify-content:center;}
 .yx-card{width:min(760px,88vw);background:#15161d;border:1px solid #333745;border-radius:10px;
@@ -103,8 +149,13 @@ const CSS = `
 .yx-card .yx-status{font-size:12px;min-height:16px;color:#ffb86b;}
 .yx-card .yx-actions{display:flex;gap:8px;justify-content:flex-end;}
 .yx-stage{position:relative;width:100%;background:#111218;border-radius:6px;overflow:hidden;
+  border:1px solid #262833;box-shadow:inset 0 0 18px rgba(0,0,0,.35);
   flex:0 0 auto;touch-action:none;user-select:none;}
 .yx-canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;}
+.yx-zoombadge{position:absolute;right:8px;bottom:8px;z-index:6;padding:2px 8px;border-radius:5px;
+  border:1px solid #3a3d4a;background:rgba(20,22,28,.88);color:#cfd3dc;font-size:11px;line-height:16px;
+  font-family:inherit;cursor:pointer;user-select:none;}
+.yx-zoombadge:hover{border-color:#5f7fd6;color:#fff;}
 .yx-num-in{width:38px;height:22px;background:#1a1b22;color:#dfe2ea;border:1px solid #34363f;border-radius:6px;
   padding:0 3px;font-size:11px;text-align:center;box-sizing:border-box;-moz-appearance:textfield;}
 .yx-num-in::-webkit-outer-spin-button,.yx-num-in::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
@@ -116,16 +167,19 @@ const CSS = `
 .yx-edit{position:absolute;margin:0;padding:2px 4px;resize:none;outline:none;z-index:5;
   background:rgba(10,11,15,.86);color:#fff;border:2px solid #3f78ff;border-radius:2px;overflow:hidden;
   font-family:inherit;line-height:1.25;box-sizing:border-box;}
-.yx-scroll{overflow:auto;padding-bottom:2px;min-height:72px;flex:0 1 auto;max-height:none;}
-.yx-table{min-width:960px;display:flex;flex-direction:column;gap:3px;position:relative;}
+.yx-scroll{overflow:auto;padding-bottom:2px;min-height:72px;flex:0 0 auto;max-height:none;}
+.yx-table{min-width:0;width:100%;display:flex;flex-direction:column;gap:3px;position:relative;}
 .yx-row{display:grid;align-items:center;gap:3px;box-sizing:border-box;
-  grid-template-columns:14px 16px 28px 14px 70px 14px minmax(80px,1fr) 14px minmax(80px,1fr)
-    14px 46px 14px 46px 14px 30px 14px 46px 14px 46px 20px 30px 58px 18px 20px;}
+  grid-template-columns:12px 26px 30px 12px minmax(62px,.7fr) 12px minmax(0,1.6fr) 12px minmax(0,2fr) 12px
+    minmax(40px,.38fr) 12px minmax(40px,.38fr) 12px 28px 12px minmax(40px,.38fr) 12px minmax(40px,.38fr)
+    26px 34px 54px 14px 26px;}
 .yx-row.yx-header{font-size:11px;color:#9a9ca6;padding:3px 4px;border:1px solid transparent;
   position:sticky;top:0;z-index:3;background:#15161d;}
 .yx-row.yx-header span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
-.yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;}
+.yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;transition:background .12s,border-color .12s;}
+.yx-item:hover{background:#23252f;border-color:#343848;}
 .yx-item.yx-sel{border-color:#3f78ff;background:#1f2330;}
+.yx-item.yx-sel:hover{background:#242a3c;}
 .yx-item.yx-hidden-row{opacity:.55;}
 .yx-item.yx-bg{background:#201d16;border-color:#38301f;}
 .yx-item.yx-bg.yx-sel{border-color:#ffb454;background:#2a2418;}
@@ -227,7 +281,13 @@ function newBox(type, x, y, w = GRID * 8, h = GRID * 5) {
 
 function setup(node) {
   if (node.__yxbox) return;
-  const state = (node.__yxbox = { ready: false, multi: false, modal: null });
+  const state = (node.__yxbox = {
+    ready: false,
+    multi: false,
+    modal: null,
+    // 描述框高度：由你拖右下角手柄决定，读不到就按 64 起
+    proseH: clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200),
+  });
 
   // ---------------------------------------------------------------- widgets
   const widget = (name) => (node.widgets || []).find((w) => w.name === name);
@@ -261,9 +321,134 @@ function setup(node) {
     if (item.element) item.element.style.display = "none";
   }
 
+  // 顶部「整体描述」照 ComfyUI 自带多行文本框（CLIP 文本编码器）的做法：
+  //  · 高度固定（PROSE_FIXED），文字多了就在框内部滚动，绝不因为文字多少去改高度
+  //  · 也绝不因为文本框去改节点高度——节点尺寸 100% 由你自己拖，所以随时都能缩回去
+  const PROSE_FIXED = 64;
+  const PROSE_MAX_GROW = 1200;   // 拉高节点时描述框最多长到这么高
+  const PROSE_MIN = PROSE_FIXED;
+  const PROSE_MAX = PROSE_FIXED;
+  const PROSE_LINE = 20;
+  const PROSE_PAD = 18;
+  let proseWidget = null;
+  let proseAutoPx = PROSE_FIXED;   // 固定高度（保留变量只为兼容老调用）
+  try {
+    proseWidget = (node.widgets || []).find((item) => item && (item.name === "整体描述" || item.name === "画面描述")) || null;
+    if (proseWidget) {
+      proseWidget.computeSize = function (width) {
+        return [Math.max(160, (width || node.size?.[0] || 400) - 24), proseHeight()];
+      };
+      proseWidget.options = proseWidget.options || {};
+      proseWidget.options.minHeight = PROSE_FIXED;
+      proseWidget.options.maxHeight = PROSE_MAX_GROW;
+    }
+  } catch (_error) {
+    proseWidget = null;
+  }
+
+  // 估算「整段文字按当前宽度排下来要多高」——只读文本 + measureText，不碰布局，不会引起节点高度反复
+  let proseMeasureCtx = null;
+  try {
+    proseMeasureCtx = document.createElement("canvas").getContext("2d");
+  } catch (_error) {
+    proseMeasureCtx = null;
+  }
+  // 量文本高度的「尺子」：一个隐藏的 textarea，宽度和字体跟真的输入框一致。
+  // 为什么不用输入框自己的 scrollHeight：输入框被拉高后，scrollHeight 会跟着变成
+  // 元素高度，于是「高度变高 → 量出来更高 → 再变高」形成正反馈（就是无限伸长）。
+  let proseRuler = null;
+  let proseRulerKey = "";
+  let proseRulerValue = 0;
+  const proseRulerHeight = (text, widthPx) => {
+    try {
+      const area = proseWidget?.inputEl || proseWidget?.element || null;
+      if (!area || typeof document === "undefined" || !document.createElement) return 0;
+      const key = `${Math.round(widthPx)}|${text}`;
+      if (key === proseRulerKey) return proseRulerValue;
+      if (!proseRuler) {
+        proseRuler = document.createElement("textarea");
+        proseRuler.style.position = "absolute";
+        proseRuler.style.visibility = "hidden";
+        proseRuler.style.left = "-9999px";
+        proseRuler.style.top = "0";
+        proseRuler.style.resize = "none";
+        proseRuler.style.overflow = "hidden";
+        proseRuler.style.boxSizing = "border-box";
+        proseRuler.style.whiteSpace = "pre-wrap";
+        proseRuler.style.wordBreak = "break-word";
+        document.body?.appendChild?.(proseRuler);
+      }
+      const cs = (typeof window !== "undefined" && window.getComputedStyle) ? window.getComputedStyle(area) : null;
+      const font = cs?.font || cs?.fontFamily || "";
+      if (font) proseRuler.style.font = font;
+      if (cs?.lineHeight && cs.lineHeight !== "normal") proseRuler.style.lineHeight = cs.lineHeight;
+      if (cs?.padding) proseRuler.style.padding = cs.padding;
+      proseRuler.style.width = `${Math.max(60, Math.round(widthPx))}px`;
+      proseRuler.value = text;
+      proseRulerKey = key;
+      proseRulerValue = Number(proseRuler.scrollHeight) || 0;
+      return proseRulerValue;
+    } catch (_error) {
+      return 0;
+    }
+  };
+  const proseTextHeight = () => {
+    if (!proseWidget) return PROSE_MIN;
+    const text = String(proseWidget.value ?? "");
+    if (!text) return PROSE_MIN;
+    const availW = Math.max(120, Math.round(node.size?.[0] || 400) - 44);
+    // 首选：用隐藏尺子量纯文本高度（跟输入框当前高度无关，不会正反馈）
+    const ruled = proseRulerHeight(text, availW);
+    if (ruled > 0) {
+      const pad = 14;
+      return clamp(Math.round(ruled + pad), PROSE_MIN, PROSE_MAX);
+    }
+    // 次选：直接读原生 textarea 的内容高度（scrollHeight）——按真实换行算到像素，
+    // 不会像「行数×行高」那样一级一级跳，输入/删除时高度是连续变化的
+    const area = proseWidget.inputEl || proseWidget.element || null;
+    const scroll = Number(area?.scrollHeight) || 0;
+    if (scroll > 0 && area?.tagName === "TEXTAREA") {
+      const pad = 14;
+      return clamp(Math.round(scroll + pad), PROSE_MIN, PROSE_MAX);
+    }
+    if (!proseMeasureCtx) {
+      // 没有 measureText 时按「中文 1 字 ≈ 14px」保守估
+      const lines = text.split("\n").reduce((acc, line) => acc + Math.max(1, Math.ceil((line.length * 14) / availW)), 0);
+      return clamp(Math.round(lines * PROSE_LINE + PROSE_PAD), PROSE_MIN, PROSE_MAX);
+    }
+    proseMeasureCtx.font = '14px system-ui, "Microsoft YaHei", sans-serif';
+    let lines = 0;
+    for (const para of text.split("\n")) {
+      if (!para) {
+        lines += 1;
+        continue;
+      }
+      let cur = 0;
+      let count = 1;
+      for (const ch of para) {
+        const width = proseMeasureCtx.measureText(ch).width;
+        if (cur + width > availW && cur > 0) {
+          count += 1;
+          cur = width;
+        } else {
+          cur += width;
+        }
+      }
+      lines += count;
+    }
+    return clamp(Math.round(lines * PROSE_LINE + PROSE_PAD), PROSE_MIN, PROSE_MAX);
+  };
+  // 描述框高度完全由你自己拖（textarea 右下角手柄），插件只读取、绝不自动改
+  const PROSE_MIN_H = 48;
+  const proseTextPx = () => PROSE_FIXED;
+  const proseHeight = () => clamp(Math.round(state.proseH || PROSE_FIXED), PROSE_MIN_H, PROSE_MAX_GROW);
+  const applyProseHeight = () => applyProseBoxHeight();
+  const syncProseAuto = () => false;
+  void proseTextHeight;
+
   const S = {
-    width: clampSize(wWidth?.value ?? 1024),
-    height: clampSize(wHeight?.value ?? 1024),
+    width: clampSize(wWidth?.value ?? 1536),
+    height: clampSize(wHeight?.value ?? 1536),
     boxes: [],
     bgs: [],          // 按列表顺序（越靠前越上层），每项带 slot = 对应哪个背景图输入口
     selected: new Set(),
@@ -282,6 +467,104 @@ function setup(node) {
 
   const root = el("div", "yx-root");
 
+  // 鼠标是否停在这个节点上：键盘 Delete / Ctrl+C / Ctrl+V 只在这个节点“热”的时候接管，
+  // 免得抢掉 ComfyUI 自己在画布上按 Delete 删节点的操作。
+  root.addEventListener("pointerenter", () => {
+    state.nodeHot = true;
+    state.markHot?.(true);
+  });
+  root.addEventListener("pointerleave", () => {
+    state.nodeHot = false;
+    state.markHot?.(false);
+  });
+  root.addEventListener("pointerdown", () => {
+    state.nodeHot = true;
+    state.markHot?.(true);
+  });
+
+  // 整体描述：照 VMNodes 海报工作台的做法，放在自己的 DOM 里用原生 textarea + resize:vertical，
+  // 右下角那两条小斜杠就是浏览器自带的拖拽手柄，往上/往下拖只改这个框自己的高度。
+  const proseBox = el("div", "yx-prose");
+  const proseLabel = el("div", "yx-prose-label", "整体描述（要点就用一句话说清整张画面）");
+  const proseArea = el("textarea", "yx-prose-area");
+  proseArea.placeholder = "一句话描述整张画面：主体 / 风格 / 光线 / 氛围";
+  proseArea.spellcheck = false;
+  proseBox.appendChild(proseLabel);
+  proseBox.appendChild(proseArea);
+  root.appendChild(proseBox);
+  // 原生「整体描述」控件完全隐藏，只留作存值与序列化（老工作流里的文字照常读出来）
+  try {
+    if (proseWidget) {
+      proseWidget.hidden = true;
+      proseWidget.computeSize = () => [0, -4];
+      proseWidget.draw = () => {};
+      if (proseWidget.options) proseWidget.options.hidden = true;
+      if (proseWidget.element) proseWidget.element.style.display = "none";
+    }
+  } catch (_error) {
+    // 忽略
+  }
+  proseArea.value = String(proseWidget?.value ?? "");
+  proseArea.addEventListener("input", () => {
+    if (!proseWidget) return;
+    proseWidget.value = proseArea.value;
+    try {
+      proseWidget.callback?.(proseArea.value);
+    } catch (_error) {
+      // 忽略
+    }
+  });
+  for (const type of ["pointerdown", "mousedown", "wheel", "keydown"]) {
+    proseArea.addEventListener(type, (event) => event.stopPropagation());
+  }
+  // 用户拖完手柄 → 记住高度（写进 node.properties，重开工作流还在），并按新高度重排
+  const applyProseBoxHeight = () => {
+    const height = clamp(Math.round(state.proseH || 64), 48, 1200);
+    const px = `${height}px`;
+    if (proseArea.style.height !== px) proseArea.style.height = px;
+    return height;
+  };
+  // 只有「真的从输入框上按下、再松开」才量高度：避免普通单击也进来量
+  let prosePointerDown = false;
+  const syncProseBoxHeight = () => {
+    if (!prosePointerDown) return;
+    prosePointerDown = false;
+    let measured = 0;
+    try {
+      // 必须用 offsetHeight（CSS 布局像素）：getBoundingClientRect 会带上画布缩放的倍率，
+      // 缩到 130% 就每次单击都乘 1.3，缩到 70% 就每次乘 0.7——这就是高度自己一直涨/一直掉的原因
+      measured = Math.round(proseArea.offsetHeight || 0);
+    } catch (_error) {
+      measured = 0;
+    }
+    if (!measured || measured < 24) return;
+    if (Math.abs(measured - (state.proseH || 0)) < 1) return;
+    state.proseH = measured;
+    node.properties = node.properties || {};
+    node.properties.yxProseH = measured;
+    layout();
+    // 你把输入框拖高了，节点不够高就把节点补到刚够（只会补高，绝不自动压矮）
+    try {
+      const needed = Math.round(nativeTop() + domDesiredHeight() + 12);
+      if (needed > (node.size?.[1] || 0) + 1 && typeof node.setSize === "function") {
+        node.setSize([Math.round(node.size?.[0] || 980), needed]);
+      }
+    } catch (_error) {
+      // 忽略
+    }
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+  proseArea.addEventListener("pointerdown", () => {
+    prosePointerDown = true;
+  });
+  try {
+    window.addEventListener("pointerup", syncProseBoxHeight, true);
+    window.addEventListener("pointercancel", syncProseBoxHeight, true);
+  } catch (_error) {
+    // 忽略
+  }
+  applyProseBoxHeight();
+
   // 节点最上方：布局提示词的导入 / 导出
   const topBar = el("div", "yx-topbar");
   const exportBtn = el("button", "yx-chip", "导出布局提示词");
@@ -294,6 +577,16 @@ function setup(node) {
   importBtn.addEventListener("click", () => openImport());
   topBar.appendChild(exportBtn);
   topBar.appendChild(importBtn);
+  const savePresetBtn = el("button", "yx-chip", "保存预设");
+  savePresetBtn.type = "button";
+  savePresetBtn.title = "把当前节点的全部参数、画布上的框和背景图信息保存成一个预设，下次一键还原";
+  savePresetBtn.addEventListener("click", () => openSavePreset());
+  const managePresetBtn = el("button", "yx-chip", "管理预设");
+  managePresetBtn.type = "button";
+  managePresetBtn.title = "查看、整理（文件夹）、改名、排序、搜索、加载或删除已保存的预设";
+  managePresetBtn.addEventListener("click", () => openPresetManager());
+  topBar.appendChild(savePresetBtn);
+  topBar.appendChild(managePresetBtn);
 
   const head = el("div", "yx-head");
   // 只画框：打开后在画布上只能画新框，不能选中/拖动/缩放/删除已有内容
@@ -540,6 +833,58 @@ function setup(node) {
     refreshRows();
     paint();
   });
+  // ---- 复制 / 粘贴（Ctrl+C / Ctrl+V，右键菜单里也有一份，剪贴板是节点内部的）
+  const boxClipboard = [];
+  const copySelection = () => {
+    const boxes = [...S.selected].filter((item) => item && !item.isBg);
+    if (!boxes.length) return false;
+    boxClipboard.length = 0;
+    for (const box of boxes) {
+      boxClipboard.push({
+        type: box.type,
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        text: box.text || "",
+        desc: box.desc || "",
+        palette: [...(box.palette || [])],
+      });
+    }
+    return true;
+  };
+
+  const pasteClipboard = () => {
+    if (!boxClipboard.length) return false;
+    const made = [];
+    for (const src of boxClipboard) {
+      const box = {
+        type: src.type,
+        x: src.x + 16,
+        y: src.y + 16,
+        w: src.w,
+        h: src.h,
+        text: src.text,
+        desc: src.desc,
+        palette: [...src.palette],
+        hidden: false,
+        lock: {},
+      };
+      // 贴进来如果压出画布，就往回挪到刚好落在画布里
+      box.x = Math.max(0, Math.min(box.x, S.width - box.w));
+      box.y = Math.max(0, Math.min(box.y, S.height - box.h));
+      made.push(box);
+    }
+    S.boxes.unshift(...made);   // 新框放在最上层，和列表第一行对应
+    S.selected.clear();
+    for (const box of made) S.selected.add(box);
+    refreshRows();
+    layout();
+    commit();
+    paint();
+    return true;
+  };
+
   // ---- 删除（画布右键菜单、键盘 Delete、工具条按钮三处共用一套二次确认）
   const deleteSelected = () => {
     const boxes = [...S.selected].filter((item) => !item.isBg);
@@ -619,6 +964,15 @@ function setup(node) {
   state.undoBtn = undoBtn;
   tableBar.appendChild(undoBtn);
 
+  const redoBtn = el("button", "yx-chip yx-undo", "重做");
+  redoBtn.type = "button";
+  redoBtn.title = "重做刚才撤销的那一步（最多 60 步）";
+  redoBtn.addEventListener("click", () => {
+    redoStep();
+  });
+  state.redoBtn = redoBtn;
+  tableBar.appendChild(redoBtn);
+
   root.appendChild(tableBar);
 
   root.appendChild(scroll);
@@ -644,8 +998,8 @@ function setup(node) {
     return item;
   };
 
-  const selectedBoxes = () => [...S.selected].filter((item) => !item.isBg);
-  const selectedBgs = () => [...S.selected].filter((item) => item.isBg);
+  const selectedBoxes = () => [...S.selected].filter((item) => item && !item.isBg);
+  const selectedBgs = () => [...S.selected].filter((item) => item && item.isBg);
 
   const applyColorToSelection = (hex) => {
     const fixed = css3(hex) || String(hex).toUpperCase();
@@ -699,6 +1053,16 @@ function setup(node) {
       item.classList.add("yx-menu-armed");
     }, { danger: true });
 
+    menuItem("复制选中框（Ctrl+C）", () => {
+      if (!boxes.length) return;
+      copySelection();
+      closeMenu();
+    });
+
+    menuItem(boxClipboard.length ? "粘贴框（Ctrl+V）" : "粘贴框（剪贴板是空的）", () => {
+      if (pasteClipboard()) closeMenu();
+    });
+
     if (boxes.length) {
       menu.appendChild(el("div", "yx-menu-sep", ""));
       const label = el("div", "yx-menu-label", "自定义颜色");
@@ -742,6 +1106,11 @@ function setup(node) {
   canvas.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (state.skipMenu) {
+      // 刚才用右键拖动平移过画布：这次不弹菜单
+      state.skipMenu = false;
+      return;
+    }
     if (state.drawOnly) return; // 只画框模式：右键不弹菜单
     if (state.editing) commitEdit();
     const hit = hitTest(eventPoint(event));
@@ -774,19 +1143,50 @@ function setup(node) {
     closeMenu();
   }, true);
 
-  // Delete 键删除选中（同样两次确认）
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Delete") return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+  // 键盘：Delete / Backspace 删选中（两次确认），Ctrl+C / Ctrl+V 复制粘贴
+  // 用 capture 阶段抢在 ComfyUI 自己处理之前，免得 Delete 被当成「删除整个节点」
+  let nodeHot = false;
+  const inTypingField = () => {
     const active = document.activeElement;
     const tag = String(active?.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea" || tag === "select") return;
-    if (state.drawOnly) return; // 只画框模式：Delete 不删东西
+    return tag === "input" || tag === "textarea" || tag === "select" || !!active?.isContentEditable;
+  };
+  const onNodeKeyDown = (event) => {
+    if (event.altKey) return;
+    if (inTypingField()) return;   // 输入框里：交给浏览器/输入框自己处理
+    const key = String(event.key || "");
+    if (event.ctrlKey || event.metaKey) {
+      if (!nodeHot) return;
+      if (key.toLowerCase() === "c") {
+        if (copySelection()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      if (key.toLowerCase() === "v") {
+        if (pasteClipboard()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }
+      return;
+    }
+    if (key !== "Delete" && key !== "Backspace") return;
+    if (!nodeHot) return;          // 鼠标不在这个节点上：Delete 仍然交回 ComfyUI（删节点）
+    if (state.drawOnly) return;    // 只画框模式：Delete 不删东西
     if (!S.selected.size) return;
     event.preventDefault();
+    event.stopPropagation();
     closeMenu();
     requestDelete();
-  });
+  };
+  window.addEventListener("keydown", onNodeKeyDown, true);
+  state.nodeHot = false;
+  state.markHot = (on) => {
+    nodeHot = !!on;
+    state.nodeHot = nodeHot;
+  };
 
   state.activeType = TYPE_OBJ;
   state.grid = true;
@@ -801,15 +1201,17 @@ function setup(node) {
   chips.get(TYPE_OBJ)?.classList.add("yx-active");
 
   // ---------------------------------------------------------------- geometry
+  // 缩放/平移只影响「显示」，不改变画布尺寸与任何坐标值
   const geo = () => {
     const rect = canvas.getBoundingClientRect();
     const cw = Math.max(1, rect.width);
     const ch = Math.max(1, rect.height);
-    const scale = Math.min(cw / S.width, ch / S.height) || 1;
+    const fit = Math.min(cw / S.width, ch / S.height) || 1;
+    const scale = fit * (state.zoom || 1);
     return {
-      rect, cw, ch, scale,
-      ox: (cw - S.width * scale) / 2,
-      oy: (ch - S.height * scale) / 2,
+      rect, cw, ch, fit, scale,
+      ox: (cw - S.width * scale) / 2 + (state.panX || 0),
+      oy: (ch - S.height * scale) / 2 + (state.panY || 0),
     };
   };
 
@@ -933,6 +1335,7 @@ function setup(node) {
   // 不做逐帧记录，所以对性能与显存基本没有影响。
   const UNDO_LIMIT = 60;
   const undoStack = [];
+  const redoStack = [];          // 撤销掉的那些步，可以按「重做」再走回来
   let lastSnap = null;
   let lastKey = null;
 
@@ -955,6 +1358,7 @@ function setup(node) {
     if (lastKey !== null && lastSnap) {
       undoStack.push(lastSnap);
       if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      redoStack.length = 0;      // 重新动手之后，之前撤销掉的分支就作废了
     }
     lastKey = key;
     lastSnap = captureSnapshot();
@@ -963,6 +1367,7 @@ function setup(node) {
 
   const resetUndo = () => {
     undoStack.length = 0;
+    redoStack.length = 0;
     try {
       lastKey = snapshotKey();
       lastSnap = captureSnapshot();
@@ -974,14 +1379,24 @@ function setup(node) {
   };
 
   const refreshUndoButton = () => {
-    if (!state.undoBtn) return;
-    const count = undoStack.length;
-    state.undoBtn.textContent = count ? `撤销 ${count}` : "撤销";
-    state.undoBtn.classList.toggle("yx-on", count > 0);
-    state.undoBtn.disabled = count === 0;
-    state.undoBtn.title = count
-      ? `撤销上一步操作（还能撤销 ${count} 步）`
-      : "没有可以撤销的操作了";
+    if (state.undoBtn) {
+      const count = undoStack.length;
+      state.undoBtn.textContent = count ? `撤销 ${count}` : "撤销";
+      state.undoBtn.classList.toggle("yx-on", count > 0);
+      state.undoBtn.disabled = count === 0;
+      state.undoBtn.title = count
+        ? `撤销上一步操作（还能撤销 ${count} 步）`
+        : "没有可以撤销的操作了";
+    }
+    if (state.redoBtn) {
+      const count = redoStack.length;
+      state.redoBtn.textContent = count ? `重做 ${count}` : "重做";
+      state.redoBtn.classList.toggle("yx-on", count > 0);
+      state.redoBtn.disabled = count === 0;
+      state.redoBtn.title = count
+        ? `重做刚才撤销的那一步（还能重做 ${count} 步）`
+        : "没有可以重做的操作了";
+    }
   };
 
   const restoreSnapshot = (snap) => {
@@ -1056,7 +1471,37 @@ function setup(node) {
   const undoStep = () => {
     if (!undoStack.length) return false;
     const snap = undoStack.pop();
+    let now = null;
+    try {
+      now = captureSnapshot();
+    } catch {
+      now = null;
+    }
     restoreSnapshot(snap);
+    // 把「撤销之前的样子」放进重做栈，重做就能一步走回来
+    if (now) {
+      redoStack.push(now);
+      if (redoStack.length > UNDO_LIMIT) redoStack.shift();
+    }
+    refreshUndoButton();
+    return true;
+  };
+
+  const redoStep = () => {
+    if (!redoStack.length) return false;
+    const snap = redoStack.pop();
+    let now = null;
+    try {
+      now = captureSnapshot();
+    } catch {
+      now = null;
+    }
+    restoreSnapshot(snap);
+    if (now) {
+      undoStack.push(now);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    }
+    refreshUndoButton();
     return true;
   };
 
@@ -1812,6 +2257,13 @@ function setup(node) {
   }
 
   function refreshRows() {
+    // 删除/撤销/换工作流之后，选中集合里可能残留已经不存在的对象，这里顺手清掉
+    if (S.selected.size) {
+      const alive = new Set([...S.boxes, ...S.bgs.filter(Boolean)]);
+      for (const item of [...S.selected]) {
+        if (!item || !alive.has(item)) S.selected.delete(item);
+      }
+    }
     rows.textContent = "";
     S.rows.clear();
     S.bgs.filter(Boolean).forEach((bg, index) => {
@@ -1842,33 +2294,151 @@ function setup(node) {
   };
 
   // ---------------------------------------------------------------- layout
+  // 这里的每个数字都必须是「算出来的、定的」，绝不去量容器的实时高度：
+  // 一旦测量结果反过来影响高度，就会和 flex / 前端布局互相拉扯（抽搐、行被裁）。
   const layoutWidth = () => Math.max(240, stage.clientWidth || 480);
 
+  const LIST_ROW_H = 32; // 单行高度（含行间距）
+  const LIST_HEAD_H = 30; // 表头
+  const LIST_MIN_ROWS = 10; // 最多显示 10 行，超过 10 行才出滚动条
+  const LIST_BASE_H = LIST_ROW_H * LIST_MIN_ROWS + LIST_HEAD_H + 8; // 10 行 + 表头 + 余量（上限）
+  const LIST_FLOOR_H = LIST_ROW_H * 3 + LIST_HEAD_H + 8; // 少于 3 行时也留出 3 行的位置，别来回跳
+
+  // 列表高度 = 行数 × 行高 + 表头；最多显示到 10 行，超过就滚动
+  // （不是「无论如何都占 10 行」，空列表时只占很小一块，节点初始高度才不会虚长）
+  const listNeeded = () => (rows.children.length || 0) * LIST_ROW_H + LIST_HEAD_H + 8;
+  const listCap = () => Math.max(LIST_BASE_H, Math.round((window.innerHeight || 900) * 0.42));
+  const listHeight = () => Math.round(clamp(listNeeded(), LIST_FLOOR_H, listCap()));
+
+  // 画布高度：先给列表留够，再按窗口预算分配，最后才受画布长宽比约束
   const stageHeight = () => {
-    const width = layoutWidth();
-    const natural = Math.round((width * S.height) / Math.max(1, S.width));
-    return clamp(natural, 200, 640);
+    const budget = clamp(Math.round((window.innerHeight || 900) * 0.34), 220, 460);
+    const natural = Math.round((layoutWidth() * S.height) / Math.max(1, S.width));
+    return Math.round(clamp(Math.min(natural, budget), 180, 520));
   };
 
-  // 列表内容自然高度：只按行数估，不去量 scrollHeight（量了会和 flex 收缩互相拉扯）
-  const LIST_ROW_H = 31; // 单行高度（含行间距）
-  const LIST_MIN_ROWS = 10; // 至少能完整看到 10 行，超过才出滚动条
-  const LIST_MIN_H = LIST_ROW_H * LIST_MIN_ROWS + 30; // 10 行 + 表头
-  const listContent = () => Math.max(LIST_ROW_H, (rows.children.length || 1) * LIST_ROW_H) + 30;
+  // 整块 DOM 界面需要的高度 = 顶部按钮行 + 工具条 + 画布 + 列表（全部是定值，杜绝互相拉扯）
+  // chrome 只量顶部两条小按钮行（它们的高度只由文字决定，跟画布/列表无关，量了也不会回路）
+  const chromeHeight = () => {
+    const heights = [];
+    try {
+      for (const item of [topBar, head, tableBar]) heights.push(Number(item?.offsetHeight) || 0);
+    } catch (_error) {
+      // 忽略
+    }
+    const measured = heights.reduce((sum, value) => sum + value, 0);
+    // 量不到（还没挂到 DOM）时按经验值；量到就把间距/内边距一并加足
+    return Math.round(measured > 20 ? measured + 38 : 92);
+  };
+  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseHeight() + 8);
 
-  // 列表区最多能占多高：只按窗口高度的上限和「至少 10 行」一起算，
-  // 绝不依赖运行时测出来的容器高度（那会和 flex 互相拉扯，导致抽搐）
-  const listCap = () => Math.max(LIST_MIN_H, Math.round((window.innerHeight || 900) * 0.42));
+  // ComfyUI 两套前端（经典画布 / Nodes 2.0）都读这个高度：
+  // 2.0 走 computeLayoutSize / --comfy-widget-min-height，经典画布走 computeSize 与元素自身高度
+  // 前端计算这块 DOM 控件高度时会读它自己元素上的 --comfy-widget-* 变量，
+  // 而那个容器是 root 的父节点，所以变量要同时写到父节点上才生效
+  const domHosts = () => {
+    const hosts = [root];
+    try {
+      if (root.parentElement) hosts.push(root.parentElement);
+      const element = state.domWidget?.element;
+      if (element && element.style) hosts.push(element);
+    } catch (_error) {
+      // 忽略
+    }
+    return hosts;
+  };
+
+  const applyDomLayoutSize = () => {
+    const height = domDesiredHeight() + "px";
+    if (root.style.height !== height) root.style.height = height;
+    if (root.style.minHeight !== height) root.style.minHeight = height;
+    for (const host of domHosts()) {
+      try {
+        if (host.style.getPropertyValue("--comfy-widget-min-height") !== height) {
+          host.style.setProperty("--comfy-widget-min-height", height);
+        }
+        if (host.style.getPropertyValue("--comfy-widget-max-height") !== height) {
+          host.style.setProperty("--comfy-widget-max-height", height);
+        }
+      } catch (_error) {
+        // 极老的浏览器没有 CSS 变量，忽略
+      }
+    }
+  };
+
+  // 上方那些原生参数控件大约占多高（兜底估算，测不到 offsetTop 时用）
+  // proseMode：'actual' 用当前描述框高度；'auto' 用文字需要的高度；'min' 用最小高度
+  const widgetStackHeight = (proseMode = "actual") => {
+    let sum = 0;
+    for (const item of node.widgets || []) {
+      if (state.domWidget && item === state.domWidget) continue;
+      if (item.hidden) continue;
+      // 「整体描述」的高度单独控制
+      if (proseWidget && item === proseWidget) {
+        sum += proseMode === "min" ? PROSE_MIN : proseMode === "auto" ? proseAutoPx : proseHeight();
+        continue;
+      }
+      let height = 24;
+      if (typeof item.computeSize === "function") {
+        try {
+          const size = item.computeSize();
+          const value = Array.isArray(size) ? Number(size[1]) : NaN;
+          if (Number.isFinite(value) && value > 0) height = value;
+        } catch (_error) {
+          // 忽略个别控件算不出尺寸的情况
+        }
+      }
+      // 上限 96：多行文本框在某些前端会被拉成几百像素，绝不能让它反过来把节点撑长
+      sum += clamp(height, 18, 96);
+    }
+    return sum;
+  };
+
+  // DOM 控件在整个节点里的起始高度。
+  // 一律用「各控件自然高度之和」估算：直接量 offsetTop 会被挤压后的布局带偏，
+  // 反而形成「量到得越矮→节点越矮→挤得越狠」的死循环。
+  const nativeTop = () => widgetStackHeight() + 46;
+  // 「刚好够用」的节点高度：描述框只按文字需要的高度算，不含你额外拉出来的空间
+  const baseNodeHeight = () => Math.round(widgetStackHeight("auto") + 46 + domDesiredHeight() + 14);
+  const neededNodeHeight = () => baseNodeHeight();
+
+  let fitPending = false;
+  // 节点高度完全交给你：插件只在「工作流里还没存过尺寸」时撑一次，之后永不自动改节点高度。
+  // 拉高、压回、贴长文、删长文都只影响文本框内部的滚动条，不会再有「拉长了缩不回去」。
+  const syncNodeHeight = () => {};
+  const fitNode = () => {};
+
+  // 首次加载：如果工作流里没存过尺寸（还是默认的小方块），一次性撑到「刚好够用」；
+  // 已经存过自定义尺寸就保持原样——你调过的尺寸下次打开还在
+  const fitNodeInitial = () => {
+    if (!node.setSize) return;
+    const need = Math.round(neededNodeHeight());
+    const current = node.size || [980, need];
+    const width0 = Math.round(current[0] || 0);
+    const height0 = Math.round(current[1] || 0);
+    const isDefault = !width0 || !height0 || width0 < 480 || height0 < 320;
+    if (!isDefault) return;
+    const width = Math.max(980, width0 || 980);
+    const height = Math.max(need, 560);
+    if (width !== width0 || height !== height0) {
+      node.setSize([width, height]);
+    }
+  };
 
   const layout = () => {
-    // 只设画布高度；列表区高度交给 flex（内容多就在固定空间里自己滚），
-    // 不再用 JS 写 maxHeight —— 那会和容器高度互相反馈，导致整块界面抽搐。
+    // 先按当前文本估一下描述框该多高（MIN~MAX），再排全景
+    syncProseAuto();
+    // 描述框高度：只跟节点高度走（拉高节点就变高，压回就变矮）
+    applyProseHeight();
+    // 画布高度：定值，不依赖容器
     const height = stageHeight() + "px";
     if (stage.style.height !== height) stage.style.height = height;
-    // 行数少时不留一大块空白，行数多时至少留出 10 行的高度，再多就滚动
-    const want = Math.min(listContent(), listCap());
-    const minH = Math.max(96, want) + "px";
+    // 列表：至少 10 行；行多了在列表内部滚动，表头固定
+    const minH = listHeight() + "px";
     if (scroll.style.minHeight !== minH) scroll.style.minHeight = minH;
+    if (scroll.style.maxHeight !== minH) scroll.style.maxHeight = minH;
+    applyDomLayoutSize();
+    fitNode();
     state.layoutReady = true;
     paint();
   };
@@ -1908,7 +2478,7 @@ function setup(node) {
     for (let i = bgs.length - 1; i >= 0; i -= 1) {
       const bg = bgs[i];
       if (!bg.image || bg.hidden) continue;
-      drawBackground(ctx, bg, g, left, top, String(wFit?.value ?? "填充"), false);
+      drawBackground(ctx, bg, g, left, top, String(wFit?.value ?? "锁比例"), false);
     }
     ctx.restore();
 
@@ -2127,7 +2697,8 @@ function setup(node) {
       c.moveTo(left + 1, Math.round(py) + 0.5);
       c.lineTo(left + 5, Math.round(py) + 0.5);
       c.stroke();
-      c.fillText(String(y), left + 6, clamp(py, top + 8, top + chh - 8));
+      // 原点只留 x 轴那一个 0，避免左下角出现两个 0
+      if (y !== 0) c.fillText(String(y), left + 6, clamp(py, top + 8, top + chh - 8));
     }
     c.restore();
   }
@@ -2331,6 +2902,19 @@ function setup(node) {
   };
 
   const pointerDown = (event) => {
+    if (event.button === 2) {
+      // 右键按下：先记下来，拖动超过 4px 才算「平移画布」；没拖动就是普通右键菜单
+      state.panDrag = {
+        sx: event.clientX,
+        sy: event.clientY,
+        px: state.panX || 0,
+        py: state.panY || 0,
+        moved: false,
+      };
+      canvas.setPointerCapture?.(event.pointerId);
+      state.panPointer = event.pointerId;
+      return;
+    }
     if (event.button !== 0) return;
     if (state.editing) commitEdit();
     const point = eventPoint(event);
@@ -2562,6 +3146,17 @@ function setup(node) {
   };
 
   const pointerUp = () => {
+    if (state.panDrag) {
+      const moved = state.panDrag.moved;
+      state.panDrag = null;
+      try { canvas.releasePointerCapture?.(state.panPointer); } catch (error) { /* 忽略 */ }
+      state.panPointer = null;
+      // 拖动过就在紧接着的 contextmenu 事件里吃掉菜单；没拖动照常弹菜单
+      state.skipMenu = moved;
+      canvas.style.cursor = "crosshair";
+      if (moved) paint();
+      return;
+    }
     const drag = state.drag;
     if (!drag) return;
     state.drag = null;
@@ -2625,6 +3220,24 @@ function setup(node) {
     pointerDown(event);
   });
   canvas.addEventListener("pointermove", (event) => {
+    if (state.panDrag) {
+      const pan = state.panDrag;
+      const dx = event.clientX - pan.sx;
+      const dy = event.clientY - pan.sy;
+      if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+      pan.moved = true;
+      if ((state.zoom || 1) <= 1.0005) {
+        // 100% 时画布正好铺满，没有可平移的空间
+        canvas.style.cursor = "crosshair";
+        return;
+      }
+      state.panX = pan.px + dx;
+      state.panY = pan.py + dy;
+      canvas.style.cursor = "grabbing";
+      paint();
+      syncZoomBadge();
+      return;
+    }
     if (!state.drag) {
       if (state.drawOnly) {
         // 只画框：画布上一律十字，不给选中/缩放光标
@@ -2668,7 +3281,64 @@ function setup(node) {
   canvas.addEventListener("pointercancel", pointerCancel);
   canvas.addEventListener("lostpointercapture", () => {
     if (state.drag) pointerUp();
+    if (state.panDrag) pointerUp();
   });
+
+  // 画布缩放角标（只有缩放/平移过才出现，点一下复位）
+  const zoomBadge = el("button", "yx-zoombadge", "缩放 100%");
+  zoomBadge.type = "button";
+  zoomBadge.style.display = "none";
+  zoomBadge.title = "点击复原：100%、回到居中";
+  zoomBadge.addEventListener("pointerdown", (event) => event.stopPropagation());
+  zoomBadge.addEventListener("click", (event) => {
+    event.stopPropagation();
+    state.zoom = 1;
+    state.panX = 0;
+    state.panY = 0;
+    paint();
+  });
+  if (stage.appendChild) stage.appendChild(zoomBadge);
+
+  const syncZoomBadge = () => {
+    const zoom = state.zoom || 1;
+    const offset = Math.abs(state.panX || 0) > 1 || Math.abs(state.panY || 0) > 1;
+    const active = Math.abs(zoom - 1) > 0.001 || offset;
+    if (zoomBadge.style) {
+      zoomBadge.style.display = active ? "block" : "none";
+      zoomBadge.textContent = `缩放 ${Math.round(zoom * 100)}%`;
+    }
+  };
+
+  // 滚轮缩放：以鼠标位置为中心，只改显示不动数据
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.editing) commitEdit();
+    const g = geo();
+    const px = event.clientX - g.rect.left;
+    const py = event.clientY - g.rect.top;
+    const cx = (px - g.ox) / g.scale;
+    const cy = (py - g.oy) / g.scale;
+    const factor = Math.exp(-event.deltaY * 0.0018);
+    const zoom = clamp((state.zoom || 1) * factor, 1, 8);
+    if (Math.abs(zoom - (state.zoom || 1)) < 0.0005) return;
+    state.zoom = zoom;
+    if (zoom <= 1.0005) {
+      // 最小就是 100%（居中）：不再缩小，也不再保留平移
+      state.zoom = 1;
+      state.panX = 0;
+      state.panY = 0;
+      paint();
+      syncZoomBadge();
+      return;
+    }
+    const scale = g.fit * zoom;
+    const limit = Math.max(g.cw, g.ch) * 2;
+    state.panX = clamp(px - cx * scale - (g.cw - S.width * scale) / 2, -limit, limit);
+    state.panY = clamp(py - cy * scale - (g.ch - S.height * scale) / 2, -limit, limit);
+    paint();
+    syncZoomBadge();
+  }, { passive: false });
   canvas.addEventListener("dblclick", (event) => {
     event.preventDefault();
     if (state.drawOnly) return; // 只画框模式：双击不进入文字编辑
@@ -2744,12 +3414,32 @@ function setup(node) {
     return `/view?${params.toString()}`;
   };
 
+  // LiteGraph 里 input.link 是「连线 id（数字）」，连线对象在 graph.links[id]；
+  // 某些新版前端直接把连线对象挂在 input.link 上，所以两种都兼容
+  const linkOriginId = (slot) => {
+    const link = slot?.link;
+    if (link == null) return null;
+    if (typeof link === "object") {
+      const id = Number(link.origin_id);
+      return Number.isFinite(id) ? id : null;
+    }
+    const graph = node.graph || app.graph;
+    const table = graph?.links || graph?._links;
+    let record = null;
+    if (Array.isArray(table)) record = table[link] ?? null;
+    else if (table && typeof table.get === "function") record = table.get(link) || null;
+    else if (table && typeof table === "object") record = table[link] || null;
+    if (!record) record = graph?.getLink?.(link) || null;
+    const id = Number(record?.origin_id);
+    return Number.isFinite(id) ? id : null;
+  };
+
   const upstreamImageURL = (slotIndex) => {
     const slot = (node.inputs || []).find((item) => bgSlotIndex(item.name) === slotIndex);
     if (!slot || slot.link == null) return null;
-    const link = slot.link;
+    const originId = linkOriginId(slot);
     // 1) 上游执行结果（ComfyUI 把上一次执行的可视化结果挂在 app.nodeOutputs）
-    const output = app.nodeOutputs?.[link.origin_id];
+    const output = originId == null ? null : app.nodeOutputs?.[originId];
     const pool = output?.images || output?.gifs || [];
     if (Array.isArray(pool)) {
       for (const info of pool) {
@@ -2758,7 +3448,7 @@ function setup(node) {
       }
     }
     // 2) 上游节点的缩略图（LoadImage 之类会把图挂到 node.imgs）
-    const origin = (node.graph || app.graph)?.getNodeById?.(link.origin_id);
+    const origin = originId == null ? null : (node.graph || app.graph)?.getNodeById?.(originId);
     const imgs = origin?.imgs || origin?.images || [];
     for (const info of imgs) {
       const url = imageURL(info);
@@ -2868,6 +3558,37 @@ function setup(node) {
     commit();
   };
 
+  // 上游换图 / 刚连上线时，不执行也能立刻把背景图挂上去：
+  // 轻量轮询（只比字符串，300ms 一次），比依赖各种回调更可靠
+  let bgWatchTimer = 0;
+  let bgWatchKey = "";
+  const backgroundKey = () => {
+    const parts = [];
+    for (const slot of node.inputs || []) {
+      const index = bgSlotIndex(slot.name);
+      if (index < 0) continue;
+      const url = slot.link == null ? "" : String(upstreamImageURL(index) || "");
+      parts.push(index + ":" + url);
+    }
+    return parts.join("|");
+  };
+  const startBackgroundWatch = () => {
+    if (bgWatchTimer) return;
+    bgWatchKey = backgroundKey();
+    bgWatchTimer = setInterval(() => {
+      if (!state.ready) return;
+      const key = backgroundKey();
+      if (key === bgWatchKey) return;
+      bgWatchKey = key;
+      syncBackgrounds().catch(() => {});
+    }, 300);
+  };
+  const stopBackgroundWatch = () => {
+    if (!bgWatchTimer) return;
+    clearInterval(bgWatchTimer);
+    bgWatchTimer = 0;
+  };
+
   // 把某张背景图直接变成画布：画布尺寸＝图片原始尺寸，图片铺满并整体锁定
   const useAsCanvas = (bg) => {
     const natW = Number(bg?.natW) || 0;
@@ -2903,19 +3624,8 @@ function setup(node) {
   };
 
   // ---------------------------------------------------------------- restore
-  const configure = (info) => {
-    if (!info) return;
-    const raw = Array.isArray(info.widgets_values) ? info.widgets_values : [];
-    const index = (node.widgets || []).indexOf(wData);
-    const value = index >= 0 ? raw[index] : undefined;
-    let data = null;
-    if (typeof value === "string" && value.trim()) {
-      try {
-        data = JSON.parse(value);
-      } catch (_error) {
-        data = null;
-      }
-    }
+  // 把一份 {boxes, bgs} 数据灌进画布（打开工作流 / 载入预设都走这里）
+  const restoreCanvas = (data) => {
     S.boxes = [];
     S.bgs = [];
     S.selected.clear();
@@ -2967,6 +3677,32 @@ function setup(node) {
     S.height = clampSize(numeric(wHeight, S.height));
     refreshRows();
     layout();
+  };
+
+  const configure = (info) => {
+    if (!info) return;
+    const raw = Array.isArray(info.widgets_values) ? info.widgets_values : [];
+    const index = (node.widgets || []).indexOf(wData);
+    const value = index >= 0 ? raw[index] : undefined;
+    let data = null;
+    if (typeof value === "string" && value.trim()) {
+      try {
+        data = JSON.parse(value);
+      } catch (_error) {
+        data = null;
+      }
+    }
+    restoreCanvas(data);
+    // 恢复描述框高度与文字（高度存在 node.properties 里，跨会话生效）
+    try {
+      state.proseH = clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200);
+      applyProseBoxHeight();
+      if (proseWidget && proseArea.value !== String(proseWidget.value ?? "")) {
+        proseArea.value = String(proseWidget.value ?? "");
+      }
+    } catch (_error) {
+      // 忽略
+    }
     // 刚载入工作流时清空撤销记录，让“撤销”从这之后的第一步算起
     state.restoring = true;
     try {
@@ -3031,6 +3767,19 @@ function setup(node) {
     return result;
   };
 
+  const originalRemoved = node.onRemoved;
+  node.onRemoved = function () {
+    stopBackgroundWatch();
+    // 撤掉挂在 window 上的「松手结算」监听，避免节点删掉后还留着
+    try {
+      window.removeEventListener?.("pointerdown", state.proseDownHandler, true);
+      window.removeEventListener?.("pointerup", state.proseUpHandler, true);
+    } catch (_error) {
+      // 忽略
+    }
+    return originalRemoved?.apply?.(this, arguments);
+  };
+
   const originalConnections = node.onConnectionsChange;
   node.onConnectionsChange = function (type, index, connected, link_info, ioSlot) {
     const result = originalConnections?.call?.(this, type, index, connected, link_info, ioSlot);
@@ -3078,8 +3827,17 @@ function setup(node) {
   let lastWidth = -1;
   let lastAvail = -1;
   let lastTickKey = "";
+  let lastProseText = null;
+  let lastNodeH = -1;
+  let lastAppliedProse = -1;
   const tick = () => {
     if (!canvas.isConnected) return;
+    // 「布局提示词输入」接上文本后实时导入（文本没变就什么都不做）
+    try {
+      syncLayoutSocket();
+    } catch (error) {
+      console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
+    }
     // 正在拖拽排序时跳过测量：避免和拖拽抢着触发布局计算
     if (state.reorderActive) {
       requestAnimationFrame(tick);
@@ -3088,6 +3846,21 @@ function setup(node) {
     const width = Math.round(stage.clientWidth || 0);
     const rect = canvas.getBoundingClientRect();
     const key = `${Math.round(rect.width)}x${Math.round(rect.height)}@${window.devicePixelRatio || 1}`;
+    // 节点高度被你拖动了 / 文字高度变了 → 同步（描述框吃掉多出来的空间、删文本时节点缩回）
+    syncNodeHeight();
+    // 「整体描述」对外只从我自己的 textarea 读，这里只做「外部改了原生值」时的回灌
+    if (proseWidget) {
+      const text = String(proseWidget.value ?? "");
+      if (text !== lastProseText) {
+        lastProseText = text;
+        if (proseArea.value !== text) proseArea.value = text;
+        if (syncProseAuto()) {
+          layout();
+          requestAnimationFrame(tick);
+          return;
+        }
+      }
+    }
     // 只用「宽度」变化触发重排；不再看容器高度，否则改高度会反过来又触发重排，
     // 每帧在两个高度之间来回跳（表现就是整个节点上下抽搐）
     if (width !== lastWidth) {
@@ -3253,16 +4026,52 @@ function setup(node) {
       return { kind: "caption", caption: text };
     }
     if (!Array.isArray(data.items)) {
-      const caption = String(data.caption ?? data.summary?.caption ?? "").trim();
-      if (!caption) return { error: "没找到 items 列表，也没找到 caption 描述" };
-      return { kind: "caption", caption };
+      // 也认别的写法：compositional_deconstruction.elements / elements / boxes
+      const alt = data.compositional_deconstruction?.elements || data.elements || data.boxes;
+      if (!Array.isArray(alt)) {
+        const caption = String(
+          data.caption ?? data.summary?.caption ?? data.high_level_description ?? data.description ?? ""
+        ).trim();
+        if (!caption) return { error: "没找到 items 列表，也没找到 caption 描述" };
+        return { kind: "caption", caption };
+      }
+      data.items = alt;
     }
     const space = String(data.bbox_coord_space || "abs").toLowerCase();
     const fmt = String(data.bbox_format || "xyxy").toLowerCase();
     // 编译后的格式：原点在画布中心、yxyx；其它一律当草稿的左上原点 xyxy 处理
     const compiled = space.indexOf("centralized") >= 0 || fmt === "yxyx";
-    const srcW = Math.max(16, Math.round(Number(data.width) || S.width));
-    const srcH = Math.max(16, Math.round(Number(data.height) || S.height));
+    // 来源尺寸：显式 width/height 优先；没有的话（比如只给 elements 的草稿）按所有 bbox 的最大范围推断
+    let srcW = Math.round(Number(data.width) || Number(data.canvas?.width) || 0);
+    let srcH = Math.round(Number(data.height) || Number(data.canvas?.height) || 0);
+    if (!srcW || !srcH) {
+      let maxX = 0;
+      let maxY = 0;
+      for (const item of data.items) {
+        if (!item) continue;
+        const values = Array.isArray(item.bbox) && item.bbox.length === 4
+          ? item.bbox.map((value) => Number(value) || 0)
+          : [item.x, item.y,
+            Number(item.x) + Number(item.width ?? item.w ?? 0),
+            Number(item.y) + Number(item.height ?? item.h ?? 0)].map((value) => Number(value) || 0);
+        if (compiled) {
+          maxX = Math.max(maxX, Math.abs(values[1]), Math.abs(values[3]));
+          maxY = Math.max(maxY, Math.abs(values[0]), Math.abs(values[2]));
+        } else {
+          maxX = Math.max(maxX, values[0], values[2]);
+          maxY = Math.max(maxY, values[1], values[3]);
+        }
+      }
+      if (compiled) {
+        srcW = srcW || Math.max(16, Math.round(maxX * 2));
+        srcH = srcH || Math.max(16, Math.round(maxY * 2));
+      } else {
+        srcW = srcW || Math.max(16, Math.round(maxX));
+        srcH = srcH || Math.max(16, Math.round(maxY));
+      }
+    }
+    srcW = Math.max(16, srcW || S.width);
+    srcH = Math.max(16, srcH || S.height);
     const boxes = [];
     for (const item of data.items) {
       if (!item) continue;
@@ -3311,7 +4120,7 @@ function setup(node) {
       const w = Math.round(x2 - x1);
       const h = Math.round(y2 - y1);
       if (w < 8 || h < 8) continue;
-      const label = String(item.label || "").trim().toLowerCase();
+      const label = String(item.label || item.type || "").trim().toLowerCase();
       const palette = (Array.isArray(item.palette) ? item.palette
         : (Array.isArray(item.color_palette) ? item.color_palette : []))
         .filter((color) => typeof color === "string" && color.trim())
@@ -3332,7 +4141,9 @@ function setup(node) {
       kind: "layout",
       width: srcW,
       height: srcH,
-      caption: String(data.summary?.caption ?? data.caption ?? ""),
+      caption: String(
+        data.summary?.caption ?? data.caption ?? data.high_level_description ?? data.description ?? ""
+      ),
       boxes,
     };
   };
@@ -3425,37 +4236,799 @@ function setup(node) {
     });
   };
 
+  // ---------------------------------------------------------------- 布局提示词输入口（实时导入）
+  const LAYOUT_INPUT_NAME = "布局提示词输入";
+  const layoutSlot = () => (node.inputs || []).find((item) => String(item?.name) === LAYOUT_INPUT_NAME);
+
+  // 取上游文本：优先读上游节点自己的文本控件（边打字边变，最实时），
+  // 读不到再退到执行结果里的 STRING 输出（比如某个节点算出来的文本）
+  const upstreamLayoutText = () => {
+    const slot = layoutSlot();
+    if (!slot || slot.link == null) return null;
+    const originId = linkOriginId(slot);
+    if (originId == null) return null;
+    const origin = (node.graph || app.graph)?.getNodeById?.(originId);
+    const isTextWidget = (item) => {
+      const type = String(item?.type || "").toLowerCase();
+      if (["number", "toggle", "combo", "button", "slider"].includes(type)) return false;
+      if (typeof item?.value !== "string") return false;
+      return !item.name?.match(/^(image|图像|图片|filename|mask|遮罩)$/i);
+    };
+    const widgetsOfOrigin = (origin?.widgets || []).filter(isTextWidget);
+    // 优先认名字像文本的那些（文本框 / 提示词 / 描述），避免抓到别的字符串参数
+    const preferred = widgetsOfOrigin.find((item) =>
+      /^(text|string|prompt|value|文本|文字|描述|提示词)$/i.test(String(item.name || "").trim()));
+    if (preferred) return preferred.value;
+    if (widgetsOfOrigin.length) {
+      // 没有明确名字就取最长的那条（空字符串也照原样返回：清空＝没有内容）
+      return widgetsOfOrigin.reduce((best, item) =>
+        (String(item.value).length > String(best.value).length ? item : best)).value;
+    }
+    const output = app.nodeOutputs?.[originId];
+    if (output) {
+      const raw = output.text ?? output.string ?? output.STRING;
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof value === "string") return value;
+    }
+    return null;
+  };
+
+  // 和 openImport 走同一个解析器；区别是这里按「当前画布」等比缩放，不反过来改画布尺寸
+  const applyLayoutText = (text) => {
+    const parsed = parseLayoutText(text);
+    if (parsed.error) return false;
+    if (parsed.kind === "caption") {
+      const target = captionWidget();
+      if (target && String(target.value ?? "") !== parsed.caption) {
+        target.value = parsed.caption;
+        commit();
+      }
+      return true;
+    }
+    const srcW = Math.max(1, Number(parsed.width) || S.width);
+    const srcH = Math.max(1, Number(parsed.height) || S.height);
+    const sx = S.width / srcW;
+    const sy = S.height / srcH;
+    const boxes = parsed.boxes.map((box) => {
+      let x = Math.round(box.x * sx);
+      let y = Math.round(box.y * sy);
+      let w = Math.max(8, Math.round(box.w * sx));
+      let h = Math.max(8, Math.round(box.h * sy));
+      x = Math.max(0, Math.min(Math.max(0, S.width - 8), x));
+      y = Math.max(0, Math.min(Math.max(0, S.height - 8), y));
+      w = Math.max(8, Math.min(w, S.width - x));
+      h = Math.max(8, Math.min(h, S.height - y));
+      return { ...box, x, y, w, h };
+    });
+    if (!boxes.length) return false;
+    if (parsed.caption && captionWidget()) {
+      captionWidget().value = parsed.caption;
+    }
+    // items 是「从背景到前景」，列表越靠上越上层，所以倒过来放
+    S.boxes = boxes.reverse().map((box) => ({
+      type: box.type,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
+      text: box.text,
+      desc: box.desc,
+      palette: box.palette.slice(),
+      hidden: false,
+      lock: emptyLocks(),
+    }));
+    S.selected.clear();
+    refreshRows();
+    layout();
+    commit();
+    paint();
+    node.graph?.setDirtyCanvas?.(true, true);
+    return true;
+  };
+
+  // 上游文本被清空 → 画布回到「什么都没画」的初始状态（框、选择、描述一起清掉）
+  const clearFromSocket = () => {
+    if (!S.boxes.length && !String(captionWidget()?.value ?? "").trim()) return;
+    S.boxes = [];
+    S.selected.clear();
+    const target = captionWidget();
+    if (target) target.value = "";
+    refreshRows();
+    layout();
+    commit();
+    paint();
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+
+  let lastLayoutText = null;
+  const syncLayoutSocket = () => {
+    const slot = layoutSlot();
+    if (!slot || slot.link == null) {
+      lastLayoutText = null;
+      return;
+    }
+    const text = upstreamLayoutText();
+    if (text == null) return;
+    if (text === lastLayoutText) return;
+    lastLayoutText = text;
+    if (!text.trim()) {
+      clearFromSocket();
+      return;
+    }
+    applyLayoutText(text);
+  };
+
+  // ---------------------------------------------------------------- 预设（保存 / 管理 / 加载）
+  const PRESET_KEY = "moss-yxbox-presets-v1";
+  const presetUID = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const readStore = () => {
+    try {
+      const raw = window.localStorage?.getItem(PRESET_KEY);
+      const data = raw ? JSON.parse(raw) : null;
+      if (data && Array.isArray(data.folders) && Array.isArray(data.items)) {
+        return { version: 1, folders: data.folders, items: data.items };
+      }
+    } catch (_error) {
+      // 存储坏了就当没有
+    }
+    return { version: 1, folders: [], items: [] };
+  };
+  const writeStore = (store) => {
+    try {
+      window.localStorage?.setItem(PRESET_KEY, JSON.stringify(store));
+      return true;
+    } catch (error) {
+      console.error("[MOSS YXBOX] 保存预设失败", error);
+      return false;
+    }
+  };
+  const nextPresetName = (store) => {
+    const used = new Set((store.items || []).map((item) => String(item.name)));
+    let index = 1;
+    while (used.has(String(index))) index += 1;
+    return String(index);
+  };
+  // 抓一份当前节点的完整状态（参数 + 画布 + 背景图信息 + 整体描述）
+  const capturePreset = (withImages) => {
+    const widgets = {};
+    for (const item of node.widgets || []) {
+      if (!item || item.name === "画布数据") continue;
+      const value = item.value;
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        widgets[item.name] = value;
+      }
+    }
+    let canvas = { boxes: [], bgs: [] };
+    try {
+      canvas = JSON.parse(serialize());
+    } catch (_error) {
+      canvas = { boxes: [], bgs: [] };
+    }
+    if (!withImages) {
+      for (const bg of canvas.bgs || []) delete bg.url;
+    }
+    return { widgets, canvas, desc: readCaption() };
+  };
+  const applyPreset = async (preset, status) => {
+    if (!preset) return;
+    const data = preset.data || {};
+    for (const [name, value] of Object.entries(data.widgets || {})) {
+      const target = widget(name);
+      if (!target) continue;
+      target.value = value;
+      try {
+        target.callback?.(value, target, null, true);
+      } catch (error) {
+        console.error("[MOSS YXBOX] 应用预设参数出错", name, error);
+      }
+    }
+    restoreCanvas(data.canvas || { boxes: [], bgs: [] });
+    let failed = 0;
+    if (preset.withImages && Array.isArray(data.canvas?.bgs)) {
+      for (const info of data.canvas.bgs) {
+        const url = typeof info?.url === "string" ? info.url : "";
+        if (!url) continue;
+        const slot = Number.isFinite(Number(info.slot)) ? Number(info.slot) : 0;
+        const bg = ensureBgEntry(slot);
+        const image = await loadImage(url);
+        if (!image) {
+          failed += 1;
+          continue;
+        }
+        bg.image = image;
+        bg.url = url;
+        bg.natW = image.naturalWidth || image.width || 0;
+        bg.natH = image.naturalHeight || image.height || 0;
+      }
+    }
+    S.width = clampSize(numeric(wWidth, S.width));
+    S.height = clampSize(numeric(wHeight, S.height));
+    refreshRows();
+    refreshInfo();
+    layout();
+    commit();
+    fitNode();
+    if (status) {
+      status.textContent = failed
+        ? `已载入预设，但有 ${failed} 张背景图加载失败（文件可能已移动或改名），其余设置不受影响`
+        : "已载入预设";
+    }
+  };
+  const askText = (message, fallback) => {
+    try {
+      const value = window.prompt(message, fallback ?? "");
+      if (value == null) return null;
+      return String(value).trim();
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  // 通用弹窗：内容自己往里塞
+  const openDialog = ({ title, hint, build }) => {
+    closeModal();
+    const overlay = el("div", "yx-modal");
+    const card = el("div", "yx-card");
+    const stop = (event) => event.stopPropagation();
+    for (const type of ["pointerdown", "mousedown", "wheel", "dblclick", "contextmenu", "keydown"]) {
+      overlay.addEventListener(type, stop, type === "wheel" ? { passive: true } : undefined);
+    }
+    overlay.addEventListener("pointerdown", (event) => {
+      if (event.target === overlay) closeModal();
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        closeModal();
+      }
+    });
+    card.appendChild(el("h3", null, title));
+    if (hint) card.appendChild(el("p", null, hint));
+    const status = el("div", "yx-status");
+    const api = { card, status, close: closeModal };
+    build(card, api);
+    card.appendChild(status);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    state.modal = overlay;
+    return api;
+  };
+
+  const openSavePreset = () => {
+    const store = readStore();
+    const autoName = nextPresetName(store);
+    openDialog({
+      title: "保存节点预设",
+      hint: "会保存这个节点的全部参数、画布尺寸、所有框（含文字、描述、颜色、锁）、背景图的位置尺寸与整体描述。"
+        + `名称留空就自动命名为 ${autoName}。`,
+      build: (card, api) => {
+        const row = el("div", "yx-form");
+        row.appendChild(el("span", "yx-form-label", "预设名称"));
+        const input = el("input", "yx-input");
+        input.type = "text";
+        input.placeholder = `留空 = ${autoName}`;
+        row.appendChild(input);
+        card.appendChild(row);
+
+        const checkRow = el("label", "yx-check-row");
+        const check = el("input", "yx-check");
+        check.type = "checkbox";
+        check.checked = false;
+        checkRow.appendChild(check);
+        checkRow.appendChild(el("span", null, "同时保存背景图的文件名与路径（下次加载会自动找回图片，文件被移动则只提示加载失败）"));
+        card.appendChild(checkRow);
+
+        const folderRow = el("div", "yx-form");
+        folderRow.appendChild(el("span", "yx-form-label", "存到文件夹"));
+        const select = el("select", "yx-select");
+        const rootOption = el("option", null, "根目录");
+        rootOption.value = "";
+        select.appendChild(rootOption);
+        for (const folder of store.folders) {
+          const option = el("option", null, presetPathName(store, folder.id));
+          option.value = folder.id;
+          select.appendChild(option);
+        }
+        folderRow.appendChild(select);
+        card.appendChild(folderRow);
+
+        const actions = el("div", "yx-actions");
+        const ok = el("button", "yx-chip yx-on", "保存");
+        ok.type = "button";
+        ok.addEventListener("click", () => {
+          const name = input.value.trim() || nextPresetName(store);
+          const duplicate = store.items.some((item) => item.name === name && (item.folder || null) === (select.value || null));
+          if (duplicate) {
+            api.status.textContent = "同名预设已存在，请换个名字";
+            return;
+          }
+          const maxOrder = store.items.reduce((acc, item) => Math.max(acc, Number(item.order) || 0), 0);
+          store.items.push({
+            id: presetUID(),
+            name,
+            folder: select.value || null,
+            created: Date.now(),
+            updated: Date.now(),
+            order: maxOrder + 1,
+            withImages: check.checked,
+            data: capturePreset(check.checked),
+          });
+          if (!writeStore(store)) {
+            api.status.textContent = "浏览器拒绝写入本地存储，保存失败";
+            return;
+          }
+          api.close();
+        });
+        const cancel = el("button", "yx-chip", "取消");
+        cancel.type = "button";
+        cancel.addEventListener("click", () => api.close());
+        actions.appendChild(cancel);
+        actions.appendChild(ok);
+        card.appendChild(actions);
+        input.focus();
+      },
+    });
+  };
+
+  const presetPathName = (store, folderId) => {
+    const chain = [];
+    let current = folderId;
+    let guard = 0;
+    while (current && guard < 6) {
+      const folder = store.folders.find((item) => item.id === current);
+      if (!folder) break;
+      chain.unshift(folder.name);
+      current = folder.parent || null;
+      guard += 1;
+    }
+    return chain.join(" / ") || "根目录";
+  };
+
+  const openPresetManager = () => {
+    const store = readStore();
+    const view = {
+      folder: null,
+      selected: new Set(),
+      multi: false,
+      sort: "custom",
+      desc: false,
+      cols: 3,
+      query: "",
+    };
+    const foldersOf = (parent) => store.folders.filter((folder) => (folder.parent || null) === parent);
+    const itemsOf = (folder) => store.items.filter((item) => (item.folder || null) === folder);
+    const chainOf = (folderId) => {
+      const chain = [];
+      let current = folderId;
+      let guard = 0;
+      while (current && guard < 6) {
+        const folder = store.folders.find((item) => item.id === current);
+        if (!folder) break;
+        chain.unshift(folder);
+        current = folder.parent || null;
+        guard += 1;
+      }
+      return chain;
+    };
+    const sorted = (list) => {
+      const items = [...list];
+      if (view.sort === "name") items.sort((a, b) => String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
+      else if (view.sort === "created") items.sort((a, b) => (Number(a.created) || 0) - (Number(b.created) || 0));
+      else items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+      if (view.desc) items.reverse();
+      return items;
+    };
+    const visibleItems = () => {
+      const keyword = view.query.trim().toLowerCase();
+      const list = itemsOf(view.folder);
+      if (!keyword) return sorted(list);
+      return sorted(list.filter((item) => String(item.name).toLowerCase().includes(keyword)));
+    };
+
+    openDialog({
+      title: "管理与加载节点预设",
+      hint: "文件夹最多 3 级；预设可单选 / 多选，可改名、移动、排序、搜索、删除（删除需二次确认）。",
+      build: (card, api) => {
+        // ---- 工具条
+        const tools = el("div", "yx-tools");
+        const search = el("input", "yx-input");
+        search.type = "search";
+        search.placeholder = "搜索预设名称";
+        search.value = view.query;
+        search.addEventListener("input", () => {
+          view.query = search.value;
+          render();
+        });
+        tools.appendChild(search);
+
+        const sortSelect = el("select", "yx-select");
+        for (const [value, label] of [["custom", "自定义顺序"], ["name", "按名称"], ["created", "按创建时间"]]) {
+          const option = el("option", null, label);
+          option.value = value;
+          if (view.sort === value) option.selected = true;
+          sortSelect.appendChild(option);
+        }
+        sortSelect.addEventListener("change", () => {
+          view.sort = sortSelect.value;
+          render();
+        });
+        tools.appendChild(sortSelect);
+
+        const orderBtn = el("button", "yx-chip", "升序");
+        orderBtn.type = "button";
+        orderBtn.addEventListener("click", () => {
+          view.desc = !view.desc;
+          orderBtn.textContent = view.desc ? "降序" : "升序";
+          render();
+        });
+        tools.appendChild(orderBtn);
+
+        const colsSelect = el("select", "yx-select");
+        for (const value of [2, 3, 4, 5]) {
+          const option = el("option", null, `每行 ${value} 个`);
+          option.value = String(value);
+          if (view.cols === value) option.selected = true;
+          colsSelect.appendChild(option);
+        }
+        colsSelect.addEventListener("change", () => {
+          view.cols = Number(colsSelect.value) || 3;
+          render();
+        });
+        tools.appendChild(colsSelect);
+
+        card.appendChild(tools);
+
+        const tools2 = el("div", "yx-tools");
+        const multiBtn = el("button", "yx-chip", "多选：关");
+        multiBtn.type = "button";
+        multiBtn.addEventListener("click", () => {
+          view.multi = !view.multi;
+          if (!view.multi && view.selected.size > 1) view.selected.clear();
+          multiBtn.textContent = `多选：${view.multi ? "开" : "关"}`;
+          multiBtn.classList.toggle("yx-on", view.multi);
+          render();
+        });
+        tools2.appendChild(multiBtn);
+
+        const allBtn = el("button", "yx-chip", "全选");
+        allBtn.type = "button";
+        allBtn.addEventListener("click", () => {
+          const items = visibleItems();
+          const all = items.every((item) => view.selected.has(item.id));
+          if (all) view.selected.clear();
+          else items.forEach((item) => view.selected.add(item.id));
+          render();
+        });
+        tools2.appendChild(allBtn);
+
+        const newFolderBtn = el("button", "yx-chip", "新建文件夹");
+        newFolderBtn.type = "button";
+        newFolderBtn.addEventListener("click", () => {
+          const depth = chainOf(view.folder).length;
+          if (depth >= 3) {
+            api.status.textContent = "最多只能建 3 级文件夹";
+            return;
+          }
+          const name = askText("新文件夹名称", "新文件夹");
+          if (!name) return;
+          store.folders.push({ id: presetUID(), name, parent: view.folder || null });
+          writeStore(store);
+          render();
+        });
+        tools2.appendChild(newFolderBtn);
+
+        const loadBtn = el("button", "yx-chip yx-on", "加载选中");
+        loadBtn.type = "button";
+        loadBtn.addEventListener("click", async () => {
+          const chosen = store.items.filter((item) => view.selected.has(item.id));
+          if (!chosen.length) {
+            api.status.textContent = "先在下面选中一个预设";
+            return;
+          }
+          if (chosen.length > 1) {
+            api.status.textContent = "一次只能加载一个预设";
+            return;
+          }
+          await applyPreset(chosen[0], api.status);
+          api.close();
+        });
+        tools2.appendChild(loadBtn);
+
+        const renameBtn = el("button", "yx-chip", "重命名");
+        renameBtn.type = "button";
+        renameBtn.addEventListener("click", () => {
+          const chosen = store.items.filter((item) => view.selected.has(item.id));
+          if (chosen.length !== 1) {
+            api.status.textContent = "重命名请只选一个预设";
+            return;
+          }
+          const name = askText("预设新名称", chosen[0].name);
+          if (!name) return;
+          chosen[0].name = name;
+          chosen[0].updated = Date.now();
+          writeStore(store);
+          render();
+        });
+        tools2.appendChild(renameBtn);
+
+        const moveBtn = el("button", "yx-chip", "移动到");
+        moveBtn.type = "button";
+        moveBtn.addEventListener("click", () => {
+          const chosen = store.items.filter((item) => view.selected.has(item.id));
+          if (!chosen.length) {
+            api.status.textContent = "先选中要移动的预设";
+            return;
+          }
+          const options = store.folders.map((folder, index) => `${index + 1} = ${presetPathName(store, folder.id)}`);
+          const answer = askText(`输入目标文件夹序号（0 = 根目录）\n${options.join("\n")}`, "0");
+          if (answer == null) return;
+          const number = Number(answer);
+          if (!Number.isFinite(number) || number < 0 || number > store.folders.length) {
+            api.status.textContent = "序号不对";
+            return;
+          }
+          const folderId = number === 0 ? null : store.folders[number - 1].id;
+          for (const item of chosen) {
+            item.folder = folderId;
+            item.updated = Date.now();
+          }
+          writeStore(store);
+          render();
+        });
+        tools2.appendChild(moveBtn);
+
+        const moveStep = (delta) => {
+          if (view.sort !== "custom") {
+            api.status.textContent = "先切到「自定义顺序」才能手动调整顺序";
+            return;
+          }
+          const chosen = store.items.filter((item) => view.selected.has(item.id));
+          if (chosen.length !== 1) {
+            api.status.textContent = "排序请只选一个预设";
+            return;
+          }
+          const list = sorted(itemsOf(view.folder));
+          const index = list.indexOf(chosen[0]);
+          const target = index + delta;
+          if (index < 0 || target < 0 || target >= list.length) return;
+          const other = list[target];
+          const a = Number(chosen[0].order) || 0;
+          const b = Number(other.order) || 0;
+          chosen[0].order = b;
+          other.order = a;
+          writeStore(store);
+          render();
+        };
+        const upBtn = el("button", "yx-chip", "上移");
+        upBtn.type = "button";
+        upBtn.addEventListener("click", () => moveStep(-1));
+        tools2.appendChild(upBtn);
+        const downBtn = el("button", "yx-chip", "下移");
+        downBtn.type = "button";
+        downBtn.addEventListener("click", () => moveStep(1));
+        tools2.appendChild(downBtn);
+
+        const deleteBtn = el("button", "yx-chip", "删除");
+        deleteBtn.type = "button";
+        deleteBtn.addEventListener("click", () => {
+          const chosen = store.items.filter((item) => view.selected.has(item.id));
+          if (!chosen.length) {
+            api.status.textContent = "先选中要删除的预设";
+            return;
+          }
+          const ask = `确定删除 ${chosen.length} 个预设？此操作不可撤销。`;
+          if (typeof window.confirm === "function" && !window.confirm(ask)) return;
+          if (typeof window.confirm === "function" && !window.confirm("再确认一次：真的要删除吗？")) return;
+          const ids = new Set(chosen.map((item) => item.id));
+          store.items = store.items.filter((item) => !ids.has(item.id));
+          view.selected.clear();
+          writeStore(store);
+          render();
+        });
+        tools2.appendChild(deleteBtn);
+        card.appendChild(tools2);
+
+        // ---- 面包屑
+        const crumb = el("div", "yx-crumb");
+        card.appendChild(crumb);
+
+        // ---- 内容区
+        const body = el("div", "yx-body");
+        card.appendChild(body);
+
+        const closeRow = el("div", "yx-actions");
+        const closeBtn = el("button", "yx-chip", "关闭");
+        closeBtn.type = "button";
+        closeBtn.addEventListener("click", () => api.close());
+        closeRow.appendChild(closeBtn);
+        card.appendChild(closeRow);
+
+        function render() {
+          crumb.replaceChildren();
+          const rootChip = el("button", "yx-crumb-btn", "根目录");
+          rootChip.type = "button";
+          rootChip.addEventListener("click", () => {
+            view.folder = null;
+            view.selected.clear();
+            render();
+          });
+          crumb.appendChild(rootChip);
+          for (const folder of chainOf(view.folder)) {
+            crumb.appendChild(el("span", "yx-crumb-sep", "›"));
+            const chip = el("button", "yx-crumb-btn", folder.name);
+            chip.type = "button";
+            chip.addEventListener("click", () => {
+              view.folder = folder.id;
+              view.selected.clear();
+              render();
+            });
+            crumb.appendChild(chip);
+          }
+
+          body.replaceChildren();
+          body.style.setProperty("--yx-cols", String(view.cols || 3));
+
+          const folders = foldersOf(view.folder);
+          if (folders.length) {
+            const folderBox = el("div", "yx-folder-list");
+            for (const folder of folders) {
+              const row = el("div", "yx-folder-row");
+              const open = el("button", "yx-folder-name", `📁 ${folder.name}`);
+              open.type = "button";
+              open.addEventListener("click", () => {
+                view.folder = folder.id;
+                view.selected.clear();
+                render();
+              });
+              row.appendChild(open);
+              const rename = el("button", "yx-mini", "改名");
+              rename.type = "button";
+              rename.addEventListener("click", () => {
+                const name = askText("文件夹新名称", folder.name);
+                if (!name) return;
+                folder.name = name;
+                writeStore(store);
+                render();
+              });
+              row.appendChild(rename);
+              const remove = el("button", "yx-mini yx-mini-danger", "删除");
+              remove.type = "button";
+              remove.addEventListener("click", () => {
+                const inside = store.folders.filter((item) => item.parent === folder.id);
+                const presets = store.items.filter((item) => item.folder === folder.id);
+                const warn = `确定删除文件夹「${folder.name}」？`
+                  + `\n里面有 ${presets.length} 个预设、${inside.length} 个子文件夹（会一起删除）。`;
+                if (typeof window.confirm === "function" && !window.confirm(warn)) return;
+                if (typeof window.confirm === "function" && !window.confirm("再确认一次：文件夹和里面的预设都会被删除。")) return;
+                const doomed = new Set([folder.id]);
+                let grew = true;
+                while (grew) {
+                  grew = false;
+                  for (const item of store.folders) {
+                    if (item.parent && doomed.has(item.parent) && !doomed.has(item.id)) {
+                      doomed.add(item.id);
+                      grew = true;
+                    }
+                  }
+                }
+                store.folders = store.folders.filter((item) => !doomed.has(item.id));
+                store.items = store.items.filter((item) => !doomed.has(item.folder));
+                if (doomed.has(view.folder)) view.folder = null;
+                view.selected.clear();
+                writeStore(store);
+                render();
+              });
+              row.appendChild(remove);
+              folderBox.appendChild(row);
+            }
+            body.appendChild(folderBox);
+          }
+
+          const items = visibleItems();
+          if (!items.length) {
+            body.appendChild(el("p", "yx-empty", view.query ? "没有匹配的预设" : "这个文件夹里还没有预设，点上方「保存预设」开始保存"));
+          } else {
+            const grid = el("div", "yx-grid");
+            for (const item of items) {
+              const cardItem = el("div", `yx-preset${view.selected.has(item.id) ? " yx-picked" : ""}`);
+              const check = el("input");
+              check.type = "checkbox";
+              check.checked = view.selected.has(item.id);
+              check.addEventListener("click", (event) => event.stopPropagation());
+              check.addEventListener("change", () => {
+                if (check.checked) {
+                  if (!view.multi) view.selected.clear();
+                  view.selected.add(item.id);
+                } else {
+                  view.selected.delete(item.id);
+                }
+                render();
+              });
+              cardItem.appendChild(check);
+              const nameRow = el("div", "yx-preset-name", item.name);
+              cardItem.appendChild(nameRow);
+              const meta = el("div", "yx-preset-meta",
+                `${presetPathName(store, item.folder || null)} · ${new Date(Number(item.created) || Date.now()).toLocaleDateString("zh-CN")}`);
+              cardItem.appendChild(meta);
+              cardItem.addEventListener("click", () => {
+                if (!view.multi) view.selected.clear();
+                if (view.selected.has(item.id)) view.selected.delete(item.id);
+                else view.selected.add(item.id);
+                render();
+              });
+              cardItem.addEventListener("dblclick", async () => {
+                await applyPreset(item, api.status);
+                api.close();
+              });
+              grid.appendChild(cardItem);
+            }
+            body.appendChild(grid);
+          }
+          syncButtons();
+        }
+
+        function syncButtons() {
+          const count = view.selected.size;
+          loadBtn.disabled = count !== 1;
+          renameBtn.disabled = count !== 1;
+          upBtn.disabled = count !== 1 || view.sort !== "custom";
+          downBtn.disabled = count !== 1 || view.sort !== "custom";
+          moveBtn.disabled = count === 0;
+          deleteBtn.disabled = count === 0;
+        }
+
+        render();
+      },
+    });
+  };
+
   // ---------------------------------------------------------------- dom widget
   const domWidget = node.addDOMWidget("yxbox_ui", "PREVIEW", root, {
     serialize: false,
     hideOnZoom: false,
+    // 2.0 前端会优先读这三个，拿不到才回落到 CSS 变量
+    // 最小值给得很小：允许你把节点拖小（拖小后这块区自己出现滚动条，而不是把节点顶回去）
+    getMinHeight: () => 120,
+    getMaxHeight: () => 4000,
+    getHeight: () => domDesiredHeight(),
     getValue: () => "",
     setValue: () => {},
   });
+  state.domWidget = domWidget;
   domWidget.serialize = false;
   if (domWidget.options) domWidget.options.serialize = false;
-  const desiredHeight = () => {
-    // 列表内容再多也只需要留出它滚动区的那块高度
-    const listHeight = Math.min(listContent(), listCap());
-    return Math.round(stageHeight() + listHeight + 64);
-  };
+  domWidget.computeLayoutSize = () => ({
+    minHeight: 120,
+    maxHeight: 4000,
+    minWidth: 0,
+  });
   domWidget.computeSize = function (width) {
-    return [Math.max(360, width || 520), Math.min(desiredHeight(), 1400)];
+    return [Math.max(360, width || 520), Math.min(domDesiredHeight(), 1600)];
   };
 
+  ensureBgInputs();
   refreshRows();
   refreshInfo();
   layout();
-  ensureBgInputs();
   state.ready = true;
-  node.setSize?.([
-    Math.max(node.size?.[0] ?? 520, 520),
-    Math.max(node.size?.[1] ?? 700, Math.min(desiredHeight(), 1400)),
-  ]);
+  // 等一帧：等原生控件挂好、DOM 控件量到宽度，再把节点一次性撑到合适尺寸
+  requestAnimationFrame(() => {
+    try {
+      fitNodeInitial();
+      // 记下我们自己的高度：之后只有「和这个值差很多」才算你手动拖过节点
+      state.appliedH = Math.round(node.size?.[1] || 0);
+      state.lastTextNeed = clamp(proseTextPx(), PROSE_MIN, PROSE_MAX);
+      layout();
+    } catch (error) {
+      console.error("[MOSS YXBOX] 初始化尺寸失败", error);
+    }
+  });
   requestAnimationFrame(tick);
   setTimeout(() => {
     syncBackgrounds().catch(() => {});
   }, 60);
+  // 上游换了图（或刚连上线）时不用执行也能立刻把背景图挂上去
+  startBackgroundWatch();
 
   state.refreshRows = refreshRows;
   state.applyModeSize = applyModeSize;
@@ -3472,12 +5045,23 @@ function setup(node) {
   state.parseLayoutText = parseLayoutText;
   state.openExport = openExport;
   state.openImport = openImport;
+  state.syncLayoutSocket = syncLayoutSocket;
+  state.openSavePreset = openSavePreset;
+  state.openPresetManager = openPresetManager;
+  state.applyPreset = applyPreset;
+  state.fitNode = fitNode;
+  state.fitNodeInitial = fitNodeInitial;
+  state.neededNodeHeight = neededNodeHeight;
+  state.domDesiredHeight = domDesiredHeight;
   state.closeModal = closeModal;
   state.scrollEl = scroll;
   state.rowsEl = rows;
   state.ensureBgInputs = ensureBgInputs;
   state.geo = geo;
   state.undo = undoStep;
+  state.redo = redoStep;
+  state.copyBoxes = copySelection;
+  state.pasteBoxes = pasteClipboard;
   state.resetUndo = resetUndo;
   syncBarButtons();
   resetUndo();
