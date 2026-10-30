@@ -52,13 +52,19 @@ const emptyLocks = (fields = FIELDS) => {
 
 const CSS = `
 .yx-root{position:relative;display:flex;flex-direction:column;gap:6px;width:100%;height:100%;box-sizing:border-box;
-  overflow:hidden;padding:7px;background:linear-gradient(180deg,#191a21,#15161b 60%);border:1px solid #23252e;
-  border-radius:8px;color:#e7e7ea;font-family:inherit;}
+  overflow:hidden;padding:7px 7px 21px;background:linear-gradient(180deg,#191a21,#15161b 60%);border:1px solid #23252e;
+  border-radius:8px;color:#e7e7ea;font-family:inherit;
+  /* 画布容器会给整块 DOM 继承一个「小手」，这里统一改回普通箭头；
+     需要 pointer / text / move 的控件各自单独声明，不受影响 */
+  cursor:default;}
+/* 文本输入仍然要 I 形文本光标（色块 / 复选框保持自己的 pointer） */
+.yx-root input:not([type="color"]):not([type="checkbox"]),.yx-root textarea{cursor:text;}
+.yx-root select{cursor:pointer;}
 .yx-prose{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;}
 .yx-prose-label{font-size:11px;color:#8d90a0;letter-spacing:.3px;}
 .yx-prose-area{width:100%;box-sizing:border-box;resize:vertical;overflow:auto;min-height:48px;height:64px;
   padding:6px 8px;border:1px solid #34363f;border-radius:7px;background:#141519;color:#e7e7ea;
-  font:inherit;font-size:12px;line-height:1.5;outline:none;}
+  font:inherit;font-size:12px;line-height:1.5;outline:none;cursor:text;overscroll-behavior:contain;}
 .yx-prose-area:focus{border-color:#3f78ff;background:#12131a;}
 .yx-prose-area::placeholder{color:#5d6070;}
 .yx-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:#c9c9d1;}
@@ -164,17 +170,40 @@ const CSS = `
 .yx-color-in::-webkit-color-swatch-wrapper{padding:2px;}
 .yx-color-in::-webkit-color-swatch{border:none;border-radius:3px;}
 .yx-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:2px 0 4px;}
+/* 画布上方的第二行工具条：网格 / 坐标 / 等分线 / 画布区高度（高度输入框仍在最右，字大一点） */
+.yx-tools{row-gap:4px;}
+.yx-tools .yx-rows-cap{font-size:13px;font-weight:600;color:#c9c9d1;}
+.yx-tools .yx-rows-input{width:62px;height:24px;font-size:13px;}
 .yx-edit{position:absolute;margin:0;padding:2px 4px;resize:none;outline:none;z-index:5;
   background:rgba(10,11,15,.86);color:#fff;border:2px solid #3f78ff;border-radius:2px;overflow:hidden;
   font-family:inherit;line-height:1.25;box-sizing:border-box;}
-.yx-scroll{overflow:auto;padding-bottom:2px;min-height:72px;flex:0 0 auto;max-height:none;}
+.yx-scroll{overflow:auto;box-sizing:border-box;flex:0 0 auto;max-height:none;cursor:default;overscroll-behavior:contain;}
+.yx-scroll:focus{outline:none;}
+/* 「显示行数」输入框：钉在操作按钮那一行的最右侧，只统计带编号的行 */
+.yx-rows-field{display:flex;align-items:center;gap:4px;margin-left:auto;padding:0 2px;user-select:none;}
+.yx-rows-field .yx-rows-cap{font-size:11px;color:#9a9ca6;white-space:nowrap;}
+.yx-rows-input{width:52px;height:22px;box-sizing:border-box;background:#12131a;border:1px solid #2a2c37;
+  border-radius:4px;color:#e7e7ea;font-size:12px;text-align:center;padding:0 3px;font-family:inherit;}
+.yx-rows-input:focus{outline:1px solid #3f78ff;border-color:#3f78ff;}
 .yx-table{min-width:0;width:100%;display:flex;flex-direction:column;gap:3px;position:relative;}
-.yx-row{display:grid;align-items:center;gap:3px;box-sizing:border-box;
-  grid-template-columns:12px 26px 30px 12px minmax(62px,.7fr) 12px minmax(0,1.6fr) 12px minmax(0,2fr) 12px
-    minmax(40px,.38fr) 12px minmax(40px,.38fr) 12px 28px 12px minmax(40px,.38fr) 12px minmax(40px,.38fr)
-    26px 34px 54px 14px 26px;}
+.yx-row{display:grid;align-items:center;gap:4px;box-sizing:border-box;
+  grid-template-columns:__BG_COLUMNS__;}
 .yx-row.yx-header{font-size:11px;color:#9a9ca6;padding:3px 4px;border:1px solid transparent;
   position:sticky;top:0;z-index:3;background:#15161d;}
+/* 绘框区没有「重置 / 画布」两列（那是背景图专属），所以它自己的列宽表少两列；
+   顺序：拖拽 整体锁 勾选 编号 | 锁类型 类型 | 锁文字 文字 | 锁描述 描述 |
+   锁宽 宽 锁高 高 锁颜色 颜色 锁x x 锁y y 显示 删除（共 22 列） */
+.yx-row.yx-box-grid{grid-template-columns:__BOX_COLUMNS__;}
+/* 竖分隔线：数据行里是一条 1px 的实心小列，表头里是同宽的透明占位（保证列位对齐） */
+.yx-sep{align-self:stretch;width:1px;background:rgba(255,255,255,.18);border-radius:1px;}
+.yx-sep.yx-sep-h{background:transparent;}
+/* 锁图标往它右边的输入框靠近一点（只影响自己的格子，不推挤后面的列） */
+.yx-row > .yx-lock{margin-right:-3px;}
+/* 背景图区、绘框区各自一个滚动容器，各自吸顶表头 */
+.yx-list{display:flex;flex-direction:column;gap:3px;}
+.yx-scroll-bg{border-radius:5px;}
+.yx-scroll-box{border-radius:5px;}
+.yx-group-note{font-size:11px;opacity:.72;white-space:nowrap;}
 .yx-row.yx-header span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
 .yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;transition:background .12s,border-color .12s;}
 .yx-item:hover{background:#23252f;border-color:#343848;}
@@ -192,6 +221,11 @@ const CSS = `
 .yx-drag:active{cursor:grabbing;}
 .yx-in,.yx-sel-type{width:100%;box-sizing:border-box;background:#12131a;border:1px solid #2a2c37;border-radius:4px;
   color:#e7e7ea;font-size:12px;height:22px;padding:0 3px;font-family:inherit;min-width:0;}
+/* 列表行里的宽 / 高 / x / y：保留数字框自带的上下箭头（点箭头可以微调），
+   列宽给到 64px 并预留箭头占位，保证箭头和四位数同时放得下 */
+.yx-row .yx-in[type=number]{text-align:center;padding:0 1px 0 2px;}
+/* 类型下拉框的文字居中，和表头「类型」两个字对齐 */
+.yx-sel-type{text-align:center;text-align-last:center;}
 .yx-in:focus,.yx-sel-type:focus{outline:1px solid #3f78ff;border-color:#3f78ff;}
 .yx-in[disabled],.yx-sel-type[disabled],.yx-color[disabled]{opacity:.4;cursor:not-allowed;}
 .yx-field{position:relative;min-width:0;display:flex;}
@@ -215,7 +249,60 @@ const CSS = `
 .yx-lock.yx-on{color:#ffcf5c;}
 .yx-check{width:14px;height:14px;margin:0;accent-color:#3f78ff;cursor:pointer;}
 .yx-check[disabled]{opacity:.4;cursor:not-allowed;}
-.yx-empty{font-size:11px;color:#7c7f8d;padding:2px 1px;}
+.yx-empty{font-size:11px;color:#7c7f8d;padding:2px 1px;min-height:30px;box-sizing:border-box;}
+/* ---- 按键分组配色：主操作(青蓝) / 工具开关(灰→选中偏蓝) / 危险(平时灰,悬停红) ---- */
+.yx-chip.yx-act{background:#16233a;border-color:#2f5f9e;color:#a9c4f2;}
+.yx-chip.yx-act:hover{background:#1b2c48;border-color:#3f78ff;color:#e2ecff;}
+.yx-chip.yx-act.yx-on{background:#22355a;border-color:#4d8fe8;color:#eaf2ff;}
+.yx-chip.yx-tool{color:#b9bcc7;}
+.yx-chip.yx-tool.yx-on{background:#243049;border-color:#3d5c8a;color:#dbe7ff;}
+.yx-chip.yx-soft-danger{color:#c0c2cb;}
+.yx-chip.yx-soft-danger:hover{color:#ff9d9d;border-color:#5a3232;background:#241a1a;}
+/* ---- 绘制框类型：永远带一个本类型的小色块，不选中也能一眼分清 ---- */
+.yx-chip.yx-type{position:relative;padding-left:21px;}
+.yx-chip.yx-type::before{content:"";position:absolute;left:8px;top:50%;width:7px;height:7px;margin-top:-3.5px;
+  border-radius:2px;background:#9aa0b0;}
+.yx-chip.yx-t-obj::before{background:#4ea1ff;}
+.yx-chip.yx-t-text::before{background:#ffd166;}
+.yx-chip.yx-t-char::before{background:#3ddc97;}
+/* ---- 小图标：用 currentColor 遮罩，不引入外部资源，也不改按钮里的文字 ---- */
+.yx-chip.yx-ic{position:relative;padding-left:22px;}
+.yx-chip.yx-ic::before{content:"";position:absolute;left:7px;top:50%;width:12px;height:12px;margin-top:-6px;
+  background-color:currentColor;opacity:.85;
+  -webkit-mask-repeat:no-repeat;-webkit-mask-position:center;-webkit-mask-size:12px 12px;
+  mask-repeat:no-repeat;mask-position:center;mask-size:12px 12px;}
+.yx-ic-export::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 10.5V2.6'/%3E%3Cpath d='M5 5.6 8 2.6l3 3'/%3E%3Cpath d='M2.6 10.4v2A1.6 1.6 0 0 0 4.2 14h7.6a1.6 1.6 0 0 0 1.6-1.6v-2'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 10.5V2.6'/%3E%3Cpath d='M5 5.6 8 2.6l3 3'/%3E%3Cpath d='M2.6 10.4v2A1.6 1.6 0 0 0 4.2 14h7.6a1.6 1.6 0 0 0 1.6-1.6v-2'/%3E%3C/svg%3E");}
+.yx-ic-import::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.6v8'/%3E%3Cpath d='M5 7.6 8 10.6l3-3'/%3E%3Cpath d='M2.6 10.4v2A1.6 1.6 0 0 0 4.2 14h7.6a1.6 1.6 0 0 0 1.6-1.6v-2'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.6v8'/%3E%3Cpath d='M5 7.6 8 10.6l3-3'/%3E%3Cpath d='M2.6 10.4v2A1.6 1.6 0 0 0 4.2 14h7.6a1.6 1.6 0 0 0 1.6-1.6v-2'/%3E%3C/svg%3E");}
+.yx-ic-save::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M3.6 2.6h8.8v10.8L8 10.4l-4.4 3z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M3.6 2.6h8.8v10.8L8 10.4l-4.4 3z'/%3E%3C/svg%3E");}
+.yx-ic-folder::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M2.4 4.6A1.4 1.4 0 0 1 3.8 3.2h2.9l1.5 1.6h4A1.4 1.4 0 0 1 13.6 6.2v6A1.4 1.4 0 0 1 12.2 13.6H3.8a1.4 1.4 0 0 1-1.4-1.4z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M2.4 4.6A1.4 1.4 0 0 1 3.8 3.2h2.9l1.5 1.6h4A1.4 1.4 0 0 1 13.6 6.2v6A1.4 1.4 0 0 1 12.2 13.6H3.8a1.4 1.4 0 0 1-1.4-1.4z'/%3E%3C/svg%3E");}
+.yx-ic-pencil::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M3 13l.9-2.9 6.4-6.4a1.5 1.5 0 0 1 2.1 2.1l-6.4 6.4z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M3 13l.9-2.9 6.4-6.4a1.5 1.5 0 0 1 2.1 2.1l-6.4 6.4z'/%3E%3C/svg%3E");}
+.yx-ic-layers::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M8 2.4 2.4 5.4 8 8.4l5.6-3z'/%3E%3Cpath d='M2.4 9.2 8 12.2l5.6-3'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Cpath d='M8 2.4 2.4 5.4 8 8.4l5.6-3z'/%3E%3Cpath d='M2.4 9.2 8 12.2l5.6-3'/%3E%3C/svg%3E");}
+.yx-ic-grid::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4'%3E%3Cpath d='M5.6 2.6v10.8M10.4 2.6v10.8M2.6 5.6h10.8M2.6 10.4h10.8'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4'%3E%3Cpath d='M5.6 2.6v10.8M10.4 2.6v10.8M2.6 5.6h10.8M2.6 10.4h10.8'/%3E%3C/svg%3E");}
+.yx-ic-axes::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.2 13.2V3.4M3.2 13.2h9.8'/%3E%3Cpath d='M1.9 4.9 3.2 3l1.3 1.9'/%3E%3Cpath d='M11.5 14.5l1.9-1.3-1.9-1.3'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.2 13.2V3.4M3.2 13.2h9.8'/%3E%3Cpath d='M1.9 4.9 3.2 3l1.3 1.9'/%3E%3Cpath d='M11.5 14.5l1.9-1.3-1.9-1.3'/%3E%3C/svg%3E");}
+.yx-ic-select::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M2.8 4.6h8.4v8.4H2.8z' stroke-dasharray='2 1.6'/%3E%3Cpath d='M5.4 8.2 7 9.8l3.4-3.6'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M2.8 4.6h8.4v8.4H2.8z' stroke-dasharray='2 1.6'/%3E%3Cpath d='M5.4 8.2 7 9.8l3.4-3.6'/%3E%3C/svg%3E");}
+.yx-ic-images::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'%3E%3Cpath d='M5.6 3.4h7v7'/%3E%3Cpath d='M3.4 5.4h7v7h-7z'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'%3E%3Cpath d='M5.6 3.4h7v7'/%3E%3Cpath d='M3.4 5.4h7v7h-7z'/%3E%3C/svg%3E");}
+.yx-ic-eye::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='M2.4 8S4.6 4.2 8 4.2 13.6 8 13.6 8 11.4 11.8 8 11.8 2.4 8 2.4 8z'/%3E%3Cpath d='M2.8 13.2 13.2 2.8'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='M2.4 8S4.6 4.2 8 4.2 13.6 8 13.6 8 11.4 11.8 8 11.8 2.4 8 2.4 8z'/%3E%3Cpath d='M2.8 13.2 13.2 2.8'/%3E%3C/svg%3E");}
+.yx-ic-trash::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.2 4.8h9.6'/%3E%3Cpath d='M5.6 4.8V3.2h4.8v1.6'/%3E%3Cpath d='M4.4 4.8 5 13.2h6l.6-8.4'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.2 4.8h9.6'/%3E%3Cpath d='M5.6 4.8V3.2h4.8v1.6'/%3E%3Cpath d='M4.4 4.8 5 13.2h6l.6-8.4'/%3E%3C/svg%3E");}
+.yx-ic-undo::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4.6 3 7.6l3 3'/%3E%3Cpath d='M3 7.6h6.2a3.1 3.1 0 0 1 0 6.2H7.4'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4.6 3 7.6l3 3'/%3E%3Cpath d='M3 7.6h6.2a3.1 3.1 0 0 1 0 6.2H7.4'/%3E%3C/svg%3E");}
+.yx-ic-redo::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4.6 13 7.6l-3 3'/%3E%3Cpath d='M13 7.6H6.8a3.1 3.1 0 0 0 0 6.2h1.8'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4.6 13 7.6l-3 3'/%3E%3Cpath d='M13 7.6H6.8a3.1 3.1 0 0 0 0 6.2h1.8'/%3E%3C/svg%3E");}
+/* ---- 列表底部收口 + 底部状态栏 ---- */
+.yx-scroll{border-radius:5px;}
+.yx-statusbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:1px;padding:4px 5px 1px;border-top:1px solid #262932;font-size:11px;line-height:14px;
+  color:#8b8e9c;white-space:nowrap;overflow:hidden;user-select:none;}
+.yx-sb-group{display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.yx-statusbar b{color:#cfd3dd;font-weight:600;}
+.yx-statusbar .yx-sb-sep{color:#494c58;}
+.yx-statusbar .yx-sb-ver{color:#9fc2ff;}
+/* ---- 列表分区：背景图区（上） / 绘框区（下），两块各自有标题与表头 ---- */
+.yx-table.yx-rows{gap:3px;}
+.yx-group{display:flex;align-items:center;gap:6px;height:22px;padding:0 5px;border-radius:5px;
+  font-size:11px;line-height:22px;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.yx-group b{font-weight:600;}
+.yx-group-bg{background:rgba(255,180,84,.10);border:1px solid rgba(255,180,84,.30);color:#ffcf8a;}
+.yx-group-box{background:rgba(78,161,255,.10);border:1px solid rgba(78,161,255,.28);color:#a9c8ff;}
+.yx-row.yx-bg-head{color:#c9a06a;background:#1a1712;border-color:#2a2318;z-index:2;}
+.yx-row.yx-bg-head span{text-align:center;}
 `;
 
 function css3(value) {
@@ -266,6 +353,20 @@ function el(tag, cls, text) {
   return node;
 }
 
+// 按「列位」往行里塞格子：遇到要竖线分隔的列位就先插一条 1px 的小列。
+// 表头用同一个函数（hiddenSeps=true）插透明占位，这样表头和数据行的列位严格对齐。
+function appendCells(parent, cells, seps, hiddenSeps = false) {
+  cells.forEach((cell, index) => {
+    if (seps && seps.has(index)) {
+      const sep = el("div", hiddenSeps ? "yx-sep yx-sep-h" : "yx-sep");
+      sep.setAttribute("aria-hidden", "true");
+      parent.appendChild(sep);
+    }
+    parent.appendChild(cell);
+  });
+  return parent;
+}
+
 function newBox(type, x, y, w = GRID * 8, h = GRID * 5) {
   return {
     type,
@@ -279,14 +380,63 @@ function newBox(type, x, y, w = GRID * 8, h = GRID * 5) {
   };
 }
 
+// 编号规则：框 01、02…；背景图 B1、B2…
+// 新对象永远取「同类里现有最大编号 + 1」，中间删掉的号不回收——否则新画一个框会把
+// 剪贴板里记着的「框01」顶掉，粘贴菜单上写的名字就和实际内容对不上了。
+function nextLabelNo(list) {
+  // 先把老数据里还没编号的对象补上号，否则这里算出来的「最大号」是 0，
+  // 新对象就会拿到 01，把已有对象的编号顶下去
+  fillMissingNos(list);
+  let max = 0;
+  for (const item of list || []) {
+    const n = Number(item && item.__no) || 0;
+    if (n > max) max = n;
+  }
+  return max + 1;
+}
+
+// 老工作流里没有编号：按「最老的先编号」补 1、2、3…
+// 列表是「最新的在最上面」（S.boxes[0] 最新），所以要从末尾往前补，
+// 保证最下面那个最早的对象拿到 01，新画的永远往后排。
+function fillMissingNos(list) {
+  const items = (list || []).filter(Boolean);
+  const used = new Set();
+  for (const item of items) {
+    const n = Number(item.__no) || 0;
+    if (n > 0) used.add(n);
+  }
+  let next = 1;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (Number(item.__no) > 0) continue;
+    while (used.has(next)) next += 1;
+    item.__no = next;
+    used.add(next);
+    next += 1;
+  }
+}
+
 function setup(node) {
   if (node.__yxbox) return;
+  // 显示行数的取值规则：只收非负整数；没存过 / 存坏了都按默认 20
+  function readRows(raw) {
+    const n = Number(raw);
+    const blank = raw === undefined || raw === null || raw === "" || !Number.isFinite(n);
+    return blank ? 20 : Math.max(0, Math.min(999, Math.round(n)));
+  }
+
   const state = (node.__yxbox = {
     ready: false,
     multi: false,
     modal: null,
     // 描述框高度：由你拖右下角手柄决定，读不到就按 64 起
     proseH: clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200),
+    // 两个分区各自的显示行数：只数自己下面带编号的行，默认各 20
+    // （旧版存在 yxShowRows 里的那个统一值已经不用了）
+    bgShowRows: readRows(node.properties?.yxBgRows),
+    boxShowRows: readRows(node.properties?.yxBoxRows),
+    // 画布区显示高度：0 = 自动（老算法），>0 = 用这个固定值
+    stageH: clamp(Math.round(Number(node.properties?.yxStageH) || 0), 0, 2600),
   });
 
   // ---------------------------------------------------------------- widgets
@@ -302,7 +452,8 @@ function setup(node) {
   const wBasis = widget("画布缩放基准");
   const wLength = widget("画布缩放长度");
   const wFit = widget("背景图填充方式");
-  const wMult = widget("宽高取整倍数");
+  // 参数改名后旧工作流 / 未重启的后端里还叫旧名，两个名字都认
+  const wMult = widget("画布宽高取整倍数") || widget("宽高取整倍数");
 
   // 背景图填充方式 = 锁比例 时，拖动/手改尺寸都要求背景图保持原图长宽比
   const ratioLockEnabled = (item) => !!item?.isBg && String(wFit?.value ?? "") === "锁比例";
@@ -320,6 +471,48 @@ function setup(node) {
     item.draw = () => {};
     if (item.element) item.element.style.display = "none";
   }
+
+  // 关掉 Nodes 2.0 时，被隐藏掉的原生控件在旧渲染里还会被画成一个没有名字的灰色小圆点，
+  // 位置正好压在「布局提示词输入」下面，看起来就是「两个半重叠的接口」。
+  // 这两个参数只给节点内部用（值照常保存、照常提交给后端），不需要接入点，直接摘掉。
+  const HIDDEN_INPUT_NAMES = new Set(["整体描述", "画布数据"]);
+  // 只在「关掉 Nodes 2.0」的旧渲染下去摘接入点：新渲染里那两个控件不会画点，
+  // 而且新渲染的控件是跟着输入走的，乱删输入反而有把控件弄没的风险。
+  const vueNodesEnabled = () => {
+    try {
+      if (window.LiteGraph?.vueNodesMode === true) return true;
+      const value = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled");
+      return value === true || value === "true";
+    } catch (_error) {
+      return false;
+    }
+  };
+  let stripTries = 0;
+  const stripHiddenInputs = () => {
+    if (stripTries >= 8 || vueNodesEnabled()) return;
+    let removed = false;
+    for (const slot of [...(node.inputs || [])]) {
+      if (!HIDDEN_INPUT_NAMES.has(String(slot?.name || ""))) continue;
+      if (slot.link != null) continue;   // 真被接了线就保留，不跟用户抢
+      const at = (node.inputs || []).indexOf(slot);
+      if (at < 0) continue;
+      try {
+        if (typeof node.removeInput === "function") node.removeInput(at);
+        else node.inputs.splice(at, 1);
+        removed = true;
+      } catch (error) {
+        console.warn("[MOSS YXBOX] 清理隐藏参数的接入点失败", error);
+      }
+    }
+    if (removed) {
+      stripTries += 1;
+      node.setDirtyCanvas?.(true, true);
+      node.graph?.setDirtyCanvas?.(true, true);
+    }
+  };
+  stripHiddenInputs();
+  setTimeout(stripHiddenInputs, 300);
+  setTimeout(stripHiddenInputs, 1500);
 
   // 顶部「整体描述」照 ComfyUI 自带多行文本框（CLIP 文本编码器）的做法：
   //  · 高度固定（PROSE_FIXED），文字多了就在框内部滚动，绝不因为文字多少去改高度
@@ -462,10 +655,28 @@ function setup(node) {
 
   // ---------------------------------------------------------------- dom
   const style = document.createElement("style");
-  style.textContent = CSS;
+  // 列宽表 + 竖分隔线的列位（1px 的独立小列，画在数据行里；表头用同宽透明占位保持对齐）
+  const BG_COLS = ["12px", "14px", "26px", "30px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,2fr)",
+    "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "14px", "54px", "14px", "minmax(62px,.5fr)",
+    "14px", "minmax(62px,.5fr)", "24px", "32px", "50px", "24px"];
+  const BOX_COLS = ["12px", "14px", "26px", "30px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,1.1fr)",
+    "12px", "minmax(0,1.3fr)", "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "14px", "28px",
+    "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "24px", "24px"];
+  // 这些列前面要竖线：整体锁 / 选中 / 编号 / 每把锁 / 显示 / 重置 / 画布 / 删除
+  const BG_SEP = new Set([1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 19, 20, 21]);
+  const BOX_SEP = new Set([1, 2, 3, 4, 7, 9, 11, 13, 15, 17, 19, 21]);
+  const columnsOf = (cols, seps) => cols
+    .flatMap((col, index) => (seps.has(index) ? ["1px", col] : [col]))
+    .join(" ");
+  style.textContent = CSS
+    .replace("__BG_COLUMNS__", columnsOf(BG_COLS, BG_SEP))
+    .replace("__BOX_COLUMNS__", columnsOf(BOX_COLS, BOX_SEP));
   document.head.appendChild(style);
 
   const root = el("div", "yx-root");
+  // Nodes 2.0：前端只对「带 data-capture-wheel="true" 且焦点在其中的元素」放行滚轮，
+  // 否则节点里的滚轮会被转发给画布（变成缩放工作流视图）。这是前端自己留的开关。
+  root.setAttribute("data-capture-wheel", "true");
 
   // 鼠标是否停在这个节点上：键盘 Delete / Ctrl+C / Ctrl+V 只在这个节点“热”的时候接管，
   // 免得抢掉 ComfyUI 自己在画布上按 Delete 删节点的操作。
@@ -485,7 +696,7 @@ function setup(node) {
   // 整体描述：照 VMNodes 海报工作台的做法，放在自己的 DOM 里用原生 textarea + resize:vertical，
   // 右下角那两条小斜杠就是浏览器自带的拖拽手柄，往上/往下拖只改这个框自己的高度。
   const proseBox = el("div", "yx-prose");
-  const proseLabel = el("div", "yx-prose-label", "整体描述（要点就用一句话说清整张画面）");
+  const proseLabel = el("div", "yx-prose-label", "整体描述（对整张画面的整体描述）");
   const proseArea = el("textarea", "yx-prose-area");
   proseArea.placeholder = "一句话描述整张画面：主体 / 风格 / 光线 / 氛围";
   proseArea.spellcheck = false;
@@ -567,21 +778,21 @@ function setup(node) {
 
   // 节点最上方：布局提示词的导入 / 导出
   const topBar = el("div", "yx-topbar");
-  const exportBtn = el("button", "yx-chip", "导出布局提示词");
+  const exportBtn = el("button", "yx-chip yx-act yx-ic yx-ic-export", "导出布局提示词");
   exportBtn.type = "button";
   exportBtn.title = "显示节点最终输出的布局提示词（与后端编译结果一致），可一键复制";
   exportBtn.addEventListener("click", () => openExport());
-  const importBtn = el("button", "yx-chip", "导入布局提示词");
+  const importBtn = el("button", "yx-chip yx-act yx-ic yx-ic-import", "导入布局提示词");
   importBtn.type = "button";
   importBtn.title = "粘贴草稿 JSON、编译后的 JSON 或纯描述，自动还原画布尺寸、框、文字与颜色";
   importBtn.addEventListener("click", () => openImport());
   topBar.appendChild(exportBtn);
   topBar.appendChild(importBtn);
-  const savePresetBtn = el("button", "yx-chip", "保存预设");
+  const savePresetBtn = el("button", "yx-chip yx-act yx-ic yx-ic-save", "保存预设");
   savePresetBtn.type = "button";
   savePresetBtn.title = "把当前节点的全部参数、画布上的框和背景图信息保存成一个预设，下次一键还原";
   savePresetBtn.addEventListener("click", () => openSavePreset());
-  const managePresetBtn = el("button", "yx-chip", "管理预设");
+  const managePresetBtn = el("button", "yx-chip yx-act yx-ic yx-ic-folder", "管理预设");
   managePresetBtn.type = "button";
   managePresetBtn.title = "查看、整理（文件夹）、改名、排序、搜索、加载或删除已保存的预设";
   managePresetBtn.addEventListener("click", () => openPresetManager());
@@ -589,8 +800,10 @@ function setup(node) {
   topBar.appendChild(managePresetBtn);
 
   const head = el("div", "yx-head");
+  // 第二行工具条：网格 / 坐标 / 等分线 / 画布区高度（原来都挤在「只画框」那一行里）
+  const toolsRow = el("div", "yx-bar yx-tools");
   // 只画框：打开后在画布上只能画新框，不能选中/拖动/缩放/删除已有内容
-  const drawOnlyBtn = el("button", "yx-chip", "只画框");
+  const drawOnlyBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-pencil", "只画框");
   drawOnlyBtn.type = "button";
   drawOnlyBtn.title = "打开后：在画布上只能按当前类型画新框，不能选中 / 拖动 / 缩放 / 删除已有内容，"
     + "方便在已有框内部再画一个框；按住 Shift 或 Alt 拖拽也能临时强制画新框（开关关闭时同样有效）";
@@ -601,7 +814,8 @@ function setup(node) {
   head.appendChild(el("span", "yx-head-label", "当前绘制框类型"));
   const chips = new Map();
   for (const type of TYPES) {
-    const chip = el("button", "yx-chip", type);
+    const typeClass = type === TYPE_TEXT ? "yx-t-text" : (type === TYPE_CHAR ? "yx-t-char" : "yx-t-obj");
+    const chip = el("button", `yx-chip yx-type ${typeClass}`, type);
     chip.type = "button";
     chip.addEventListener("click", () => {
       state.activeType = type;
@@ -615,7 +829,7 @@ function setup(node) {
 
   const canvasInfo = el("span", "yx-info");
   const bgInfo = el("span", "yx-info");
-  const gridBtn = el("button", "yx-chip yx-on", "网格");
+  const gridBtn = el("button", "yx-chip yx-tool yx-on yx-ic yx-ic-grid", "网格");
   gridBtn.type = "button";
   gridBtn.title = "显示 / 隐藏 16 像素网格";
   gridBtn.addEventListener("click", () => {
@@ -623,7 +837,7 @@ function setup(node) {
     gridBtn.classList.toggle("yx-on", state.grid !== false);
     paint();
   });
-  const axesBtn = el("button", "yx-chip yx-on", "坐标");
+  const axesBtn = el("button", "yx-chip yx-tool yx-on yx-ic yx-ic-axes", "坐标");
   axesBtn.type = "button";
   axesBtn.title = "显示 / 隐藏 左下角原点的坐标系刻度";
   axesBtn.addEventListener("click", () => {
@@ -631,7 +845,7 @@ function setup(node) {
     axesBtn.classList.toggle("yx-on", state.axes !== false);
     paint();
   });
-  const multiBtn = el("button", "yx-chip", "多选");
+  const multiBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-layers", "多选");
   multiBtn.type = "button";
   multiBtn.title = "打开后，画布与列表里才可以同时选中多个框；关闭时点一下只会选中一个框";
   multiBtn.addEventListener("click", () => {
@@ -705,15 +919,42 @@ function setup(node) {
 
   head.appendChild(canvasInfo);
   head.appendChild(bgInfo);
-  head.appendChild(multiBtn);
-  head.appendChild(gridBtn);
-  head.appendChild(axesBtn);
-  head.appendChild(hDivBtn);
-  head.appendChild(hDivNum);
-  head.appendChild(hDivColor);
-  head.appendChild(vDivBtn);
-  head.appendChild(vDivNum);
-  head.appendChild(vDivColor);
+  // 网格往后的一串工具换到第二行（toolsRow），最右边仍是「画布区高度」
+  toolsRow.appendChild(gridBtn);
+  toolsRow.appendChild(axesBtn);
+  toolsRow.appendChild(hDivBtn);
+  toolsRow.appendChild(hDivNum);
+  toolsRow.appendChild(hDivColor);
+  toolsRow.appendChild(vDivBtn);
+  toolsRow.appendChild(vDivNum);
+  toolsRow.appendChild(vDivColor);
+
+  // 画布区高度（方案 A）：填了就按这个高度显示画布区，留空则按窗口预算 + 画布长宽比自动算。
+  // 默认留空，所以初始高度和以前完全一样；值存在节点里，跨会话保留。
+  const stageHField = el("label", "yx-rows-field");
+  stageHField.title = "画布区（绘图区）的显示高度，单位像素。留空 = 自动（按窗口高度预算和画布长宽比算，180–520px）;\n"
+    + "填数字 = 固定成这个高度（140–2600px）。拉宽节点画布区变宽、拉长节点不会改它——高度只由这里决定。";
+  stageHField.appendChild(el("span", "yx-rows-cap", "画布区高度"));
+  const stageHInput = el("input", "yx-rows-input");
+  stageHInput.type = "text";
+  stageHInput.inputMode = "numeric";
+  stageHInput.maxLength = "4";
+  stageHInput.placeholder = "自动";
+  stageHInput.title = stageHField.title;
+  stageHField.appendChild(stageHInput);
+  toolsRow.appendChild(stageHField);
+  state.stageHInput = stageHInput;
+  stageHInput.addEventListener("input", () => {
+    stageHInput.value = String(stageHInput.value || "").replace(/[^0-9]/g, "").slice(0, 4);
+  });
+  stageHInput.addEventListener("change", () => applyStageHeightInput());
+  stageHInput.addEventListener("blur", () => applyStageHeightInput());
+  stageHInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyStageHeightInput();
+    }
+  });
 
   const stage = el("div", "yx-stage");
   const canvas = el("canvas", "yx-canvas");
@@ -737,12 +978,53 @@ function setup(node) {
     paint();
   };
 
-  const scroll = el("div", "yx-scroll");
-  const table = el("div", "yx-table");
+  // 列表拆成两块完全独立的区域：背景图区、绘框区。
+  // 各自有自己的标题行、表头、滚动条和「显示行数」，一块再多也不会挤掉另一块。
+  const makePanelScroll = (extraClass) => {
+    const panel = el("div", `yx-scroll ${extraClass}`);
+    // 列表要能拿焦点：2.0 只对「焦点就在 data-capture-wheel 元素里」的情况放行滚轮，
+    // 所以按下列表时把焦点收到列表容器上（按在输入框/按钮上时不抢）
+    panel.tabIndex = 0;
+    panel.setAttribute("data-capture-wheel", "true");
+    panel.addEventListener("pointerdown", (event) => {
+      const hit = event.target;
+      if (hit && typeof hit.closest === "function"
+        && hit.closest("input, textarea, select, button")) return;
+      try {
+        panel.focus({ preventScroll: true });
+      } catch (_error) {
+        // 忽略
+      }
+    });
+    return panel;
+  };
+  const list = el("div", "yx-list");
+  // —— 背景图区（列表最上面）——
+  const bgScroll = makePanelScroll("yx-scroll-bg");
+  const bgTitle = el("div", "yx-group yx-group-bg");
+  const bgTitleNote = el("span", "yx-group-note", "");
+  const bgHead = el("div", "yx-row yx-header yx-bg-head");
+  const bgRows = el("div", "yx-table yx-rows");
+  bgTitle.appendChild(el("b", null, "背景图区"));
+  bgTitle.appendChild(bgTitleNote);
+  bgTitle.appendChild(makeRowsInput("bg"));
+  bgScroll.appendChild(bgHead);
+  bgScroll.appendChild(bgRows);
+  // —— 绘框区（在背景图区下方，与它完全独立）——
+  const boxScroll = makePanelScroll("yx-scroll-box");
+  const boxTitle = el("div", "yx-group yx-group-box");
+  const boxTitleNote = el("span", "yx-group-note", "");
   const tableHead = el("div", "yx-row yx-header");
-  // 列：移动 选中 编号 | 锁 类型 | 锁 文字 | 锁 描述 | 锁 宽 | 锁 高 | 锁 颜色 | 锁 x | 锁 y | 显示 重置 作画布 整体锁 删除
-  const LABELS = ["", "选中", "编号", "", "类型", "", "文字", "", "描述", "", "宽", "", "高", "",
-    "颜色", "", "x", "", "y", "显示", "重置", "作画布", "锁", "删除"];
+  boxTitle.appendChild(el("b", null, "绘框区"));
+  boxTitle.appendChild(boxTitleNote);
+  boxTitle.appendChild(makeRowsInput("box"));
+  // 列：移动 整体锁 | 选中 编号 | 锁 类型 | 锁 备注 | 锁 宽 | 锁 高 | 锁 压暗 | 锁 x | 锁 y | 显示 重置 画布 删除
+  // 背景图区没有「文字」这一列，所以两套列宽表不同（见 CSS 的 .yx-row / .yx-row.yx-box-grid）
+  const LABELS = ["", "", "选中", "编号", "", "类型", "", "备注", "", "宽", "", "高", "",
+    "压暗%", "", "x", "", "y", "显示", "重置", "画布", "删除"];
+  // 绘框区少「重置 / 画布」两列，其余与背景图区一致（每个字段前面那一格就是它的锁）
+  const BOX_LABELS = ["", "", "选中", "编号", "", "类型", "", "文字", "", "描述", "", "宽", "",
+    "高", "", "颜色", "", "x", "", "y", "显示", "删除"];
   const HEAD_HINT = {
     选中: "勾上＝选中这一行（可多选）",
     编号: "图层序号，数字越小越靠上层",
@@ -760,40 +1042,123 @@ function setup(node) {
     锁: "整体锁定：位置与尺寸都不能改",
     删除: "删除这一行（点两次才生效）",
   };
-  for (const label of LABELS) {
+  const boxHeadCells = [];
+  for (let i = 0; i < BOX_LABELS.length; i += 1) {
+    const label = BOX_LABELS[i];
     const span = el("span", null, label);
     if (label && HEAD_HINT[label]) span.title = HEAD_HINT[label];
-    tableHead.appendChild(span);
+    else if (i === 1) span.title = "整体锁：锁上后这一行的类型 / 文字 / 描述 / 宽 / 高 / 颜色 / x / y 都不能改";
+    // 「锁」这几个字从表头去掉了，但那一格仍然是锁的列：悬停仍能看到说明
+    else if (i > 1 && label === "") span.title = "锁：锁上 / 解开它右边那个参数（图标在每一行的那一格）";
+    boxHeadCells.push(span);
   }
-  const rows = el("div", "yx-table");
-  rows.style.gap = "3px";
-  rows.style.display = "flex";
-  rows.style.flexDirection = "column";
-  table.appendChild(tableHead);
-  table.appendChild(rows);
-  scroll.appendChild(table);
+  // 表头也用同一套竖线占位（透明），保证和数据行逐列对齐
+  appendCells(tableHead, boxHeadCells, BOX_SEP, true);
+  tableHead.classList.add("yx-box-grid");
+  // 背景图区表头：直接用 LABELS（已经没有「文字」那一列，备注只有一格）
+  const bgHeadCells = [];
+  for (let i = 0; i < LABELS.length; i += 1) {
+    const label = LABELS[i];
+    const span = el("span", null, label);
+    if (label && HEAD_HINT[label]) {
+      span.title = HEAD_HINT[label];
+    } else if (i === 1) {
+      span.title = "整体锁：锁上后这张图的宽 / 高 / x / y / 备注 / 压暗都不能改";
+    } else if (i > 1 && label === "") {
+      span.title = "锁：锁上 / 解开它右边那个参数（图标在每一行的那一格）";
+    }
+    bgHeadCells.push(span);
+  }
+  appendCells(bgHead, bgHeadCells, BG_SEP, true);
+  const rows = el("div", "yx-table yx-rows");
+  boxScroll.appendChild(tableHead);
+  boxScroll.appendChild(rows);
+  // 背景图区在上、绘框区在下，两块各有自己的滚动条
+  list.appendChild(bgTitle);
+  list.appendChild(bgScroll);
+  list.appendChild(boxTitle);
+  list.appendChild(boxScroll);
+
+  // 在「列表」和「描述框」里滚轮只滚它们自己：
+  // 事件在 document 的捕获阶段就被拦下，不再冒泡到画布，所以不会把整个工作流视图缩放掉。
+  // 挂在 document 而不是 root：Nodes 2.0 有时会把节点里的 DOM 内容挡在指针命中之外，
+  // 这时事件目标是画布，只能靠坐标判断指针是否落在列表上（否则滚轮会变成缩放）。
+  const scrollListByWheel = (list, event) => {
+    // 先拦住：画布收到滚轮会把整个工作流视图缩放掉
+    event.preventDefault();
+    event.stopPropagation();
+    const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? Math.max(80, list.clientHeight) : 1;
+    list.scrollTop += event.deltaY * unit;
+  };
+  const pointInPanel = (panel, event) => {
+    try {
+      const rect = panel.getBoundingClientRect();
+      if (!rect || !(rect.width > 0 && rect.height > 0)) return false;
+      const x = Number(event.clientX) || 0;
+      const y = Number(event.clientY) || 0;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    } catch (_error) {
+      return false;
+    }
+  };
+  // 两个分区各自滚动：按指针位置判断落在哪一个区里
+  const panelAtPoint = (event) => {
+    for (const panel of [bgScroll, boxScroll]) {
+      if (pointInPanel(panel, event)) return panel;
+    }
+    return null;
+  };
+  // 输入框（包括点开三角后弹出的大输入框）里滚轮只滚这个输入框自己：
+  // 只拦住冒泡（不让画布缩放），绝不 preventDefault，也不把它当成「在列表上滚动」。
+  const isEditable = (target) => {
+    if (!target || typeof target.closest !== "function") return null;
+    return target.closest("textarea, input, select, [contenteditable='true'], .yx-prose-area");
+  };
+  const onWheelCapture = (event) => {
+    const target = event.target;
+    const canClosest = target && typeof target.closest === "function";
+    const editable = isEditable(target);
+    if (editable) {
+      event.stopPropagation();
+      return;
+    }
+    const panel = canClosest ? target.closest(".yx-scroll") : null;
+    if (panel) {
+      scrollListByWheel(panel, event);
+      return;
+    }
+    if (canClosest && target.closest(".yx-root")) return;
+    // 目标不在这个节点里（2.0 挡在命中之外时的表现）：按坐标兜底
+    const fallback = panelAtPoint(event);
+    if (fallback) scrollListByWheel(fallback, event);
+  };
+  state.wheelListHandler = onWheelCapture;
+  document.addEventListener("wheel", onWheelCapture, { capture: true, passive: false });
 
   root.appendChild(topBar);
   root.appendChild(head);
+  root.appendChild(toolsRow);
   root.appendChild(stage);
 
   // 绘图区与列表之间的一排操作键
   const tableBar = el("div", "yx-bar");
-  const allBoxesBtn = el("button", "yx-chip", "全选框");
+  const allBoxesBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-select", "全选框");
   allBoxesBtn.type = "button";
   allBoxesBtn.title = "点一下选中所有绘制框（不含背景图），再点一下取消全选";
-  const allBgBtn = el("button", "yx-chip", "全选背景");
+  const allBgBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-images", "全选背景");
   allBgBtn.type = "button";
   allBgBtn.title = "点一下选中所有背景图，再点一下取消全选";
-  const delSelBtn = el("button", "yx-chip", "删除选中");
+  const delSelBtn = el("button", "yx-chip yx-soft-danger yx-ic yx-ic-trash", "删除选中");
   delSelBtn.type = "button";
   delSelBtn.title = "删除所有选中的框和背景图（点两次才生效）";
-  const hideSelBtn = el("button", "yx-chip", "隐藏选中");
+  const hideSelBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-eye", "隐藏选中");
   hideSelBtn.type = "button";
-  hideSelBtn.title = "把选中的对象一键隐藏，再点一下把它们恢复显示";
+  hideSelBtn.title = "把选中的框 / 背景图隐藏（隐藏后不画在预览里、也不参与提示词编译）。\n"
+    + "隐藏和取消隐藏是两个独立按键，藏完可以直接去选别的对象继续藏，不用先恢复。";
+  const showSelBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-eye", "取消隐藏选中");
+  showSelBtn.type = "button";
+  showSelBtn.title = "把选中的对象恢复显示（只要它现在是隐藏状态）。和「隐藏选中」互不影响，随时可点。";
 
-  // 隐藏选中：记住这一批被隐藏的对象，第二次点击就把它们恢复
-  let hiddenBatch = [];
   const syncBarButtons = () => {
     const allBoxesOn = S.boxes.length > 0 && S.boxes.every((box) => S.selected.has(box));
     allBoxesBtn.classList.toggle("yx-on", allBoxesOn);
@@ -802,8 +1167,9 @@ function setup(node) {
     const allBgOn = bgs.length > 0 && bgs.every((bg) => S.selected.has(bg));
     allBgBtn.classList.toggle("yx-on", allBgOn);
     allBgBtn.textContent = allBgOn ? "取消全选背景" : "全选背景";
-    hideSelBtn.classList.toggle("yx-on", hiddenBatch.length > 0);
-    hideSelBtn.textContent = hiddenBatch.length > 0 ? "取消隐藏选中" : "隐藏选中";
+    // 选中里有没有隐藏的：有就把「取消隐藏选中」点亮，方便一眼看出能恢复
+    const anyHidden = [...S.selected].some((item) => item && item.hidden);
+    showSelBtn.classList.toggle("yx-on", anyHidden);
   };
   state.syncBar = syncBarButtons;
   state.setDrawOnly = setDrawOnly;
@@ -815,7 +1181,6 @@ function setup(node) {
     } else {
       for (const box of S.boxes) S.selected.add(box);
     }
-    hiddenBatch = [];
     syncBarButtons();
     refreshRows();
     paint();
@@ -828,36 +1193,90 @@ function setup(node) {
     } else {
       for (const bg of bgs) S.selected.add(bg);
     }
-    hiddenBatch = [];
     syncBarButtons();
     refreshRows();
     paint();
   });
-  // ---- 复制 / 粘贴（Ctrl+C / Ctrl+V，右键菜单里也有一份，剪贴板是节点内部的）
-  const boxClipboard = [];
+  // ---- 复制 / 粘贴（Ctrl+C / Ctrl+V，右键菜单里也有一份）
+  // 剪贴板里永远只有一个对象：复制框会覆盖之前复制的图，复制图也会覆盖之前复制的框。
+  let clipboardItem = null;
+  const boxLabel = (box) => {
+    const no = Number(box?.__no) || 0;
+    const fallback = Math.max(1, S.boxes.indexOf(box) + 1);
+    return `框${String(no > 0 ? no : fallback).padStart(2, "0")}`;
+  };
+  const bgLabel = (bg) => `背景图B${Number(bg?.__no) || (Number(bg?.slot) || 0) + 1}`;
+  const itemLabel = (item) => (item && item.isBg ? bgLabel(item) : boxLabel(item));
+  const clipboardLabel = () => (clipboardItem ? clipboardItem.label : "");
+
   const copySelection = () => {
-    const boxes = [...S.selected].filter((item) => item && !item.isBg);
-    if (!boxes.length) return false;
-    boxClipboard.length = 0;
-    for (const box of boxes) {
-      boxClipboard.push({
-        type: box.type,
-        x: box.x,
-        y: box.y,
-        w: box.w,
-        h: box.h,
-        text: box.text || "",
-        desc: box.desc || "",
-        palette: [...(box.palette || [])],
-      });
+    const items = [...S.selected].filter(Boolean);
+    if (!items.length) return false;
+    // 多选时只复制排在最上面的那个（和画面层级一致）
+    const src = items[0];
+    if (src.isBg) {
+      if (src.lockedCanvas) return false;
+      clipboardItem = {
+        kind: "bg",
+        label: bgLabel(src),
+        slot: src.slot,
+        url: src.url || "",
+        x: src.x,
+        y: src.y,
+        w: src.w,
+        h: src.h,
+        desc: src.desc || "",
+        dim: clamp(Number(src.dim) || 45, 1, 100),
+        natW: src.natW,
+        natH: src.natH,
+        image: src.image || null,
+        lock: { ...(src.lock || {}) },
+      };
+    } else {
+      clipboardItem = {
+        kind: "box",
+        label: boxLabel(src),
+        type: src.type,
+        x: src.x,
+        y: src.y,
+        w: src.w,
+        h: src.h,
+        text: src.text || "",
+        desc: src.desc || "",
+        palette: [...(src.palette || [])],
+      };
     }
     return true;
   };
 
   const pasteClipboard = () => {
-    if (!boxClipboard.length) return false;
+    const src = clipboardItem;
+    if (!src) return false;
     const made = [];
-    for (const src of boxClipboard) {
+    if (src.kind === "bg") {
+      const bg = {
+        isBg: true,
+        // 副本沿用原来那张图的 slot：后端还是拿同一张图，只是换个位置/尺寸再画一遍
+        slot: src.slot,
+        x: Math.max(0, Math.min(src.x + 16, S.width - Math.min(src.w, S.width))),
+        y: Math.max(0, Math.min(src.y + 16, S.height - Math.min(src.h, S.height))),
+        w: src.w,
+        h: src.h,
+        hidden: false,
+        desc: src.desc,
+        url: src.url,
+        dim: clamp(Number(src.dim) || 45, 1, 100),
+        lockedCanvas: false,
+        lockAll: false,
+        lock: { ...src.lock },
+        image: src.image || null,
+        natW: src.natW,
+        natH: src.natH,
+      };
+      bg.__no = nextLabelNo(S.bgs);
+      S.bgs.unshift(bg);
+      made.push(bg);
+    } else {
       const box = {
         type: src.type,
         x: src.x + 16,
@@ -873,17 +1292,25 @@ function setup(node) {
       // 贴进来如果压出画布，就往回挪到刚好落在画布里
       box.x = Math.max(0, Math.min(box.x, S.width - box.w));
       box.y = Math.max(0, Math.min(box.y, S.height - box.h));
+      box.__no = nextLabelNo(S.boxes);
+      S.boxes.unshift(box);   // 新框放在最上层，和列表第一行对应
       made.push(box);
     }
-    S.boxes.unshift(...made);   // 新框放在最上层，和列表第一行对应
     S.selected.clear();
-    for (const box of made) S.selected.add(box);
+    for (const item of made) S.selected.add(item);
     refreshRows();
     layout();
     commit();
     paint();
     return true;
   };
+
+  // 复制并粘贴：先复制当前选中，再立刻贴一份
+  const copyAndPaste = () => {
+    if (!copySelection()) return false;
+    return pasteClipboard();
+  };
+  state.copyAndPaste = copyAndPaste;
 
   // ---- 删除（画布右键菜单、键盘 Delete、工具条按钮三处共用一套二次确认）
   const deleteSelected = () => {
@@ -892,7 +1319,9 @@ function setup(node) {
     if (!boxes.length && !bgs.length) return false;
     S.boxes = S.boxes.filter((box) => !boxes.includes(box));
     for (const bg of bgs) {
-      const slot = (node.inputs || []).find((s) => bgSlotIndex(s.name) === bg.slot);
+      // 同一个输入口可能被复制出好几份：只有最后一份也删掉时才断线
+      const stillUsed = S.bgs.some((item) => item !== bg && item.slot === bg.slot);
+      const slot = stillUsed ? null : (node.inputs || []).find((s) => bgSlotIndex(s.name) === bg.slot);
       if (slot && slot.link != null && node.disconnectInput) node.disconnectInput(slot);
       S.bgs = S.bgs.filter((item) => item !== bg);
       S.rows.delete(bg);
@@ -904,6 +1333,32 @@ function setup(node) {
     paint();
     return true;
   };
+
+  // ---- 隐藏 / 取消隐藏（工具条两个按键 + 画布右键菜单共用）
+  const hideSelected = () => {
+    const items = [...S.selected].filter(Boolean);
+    if (!items.length) return false;
+    for (const item of items) item.hidden = true;
+    // 藏完就清空选中：可以直接接着选别的对象继续藏，不用先恢复
+    S.selected.clear();
+    syncBarButtons();
+    refreshRows();
+    commit();
+    paint();
+    return true;
+  };
+  const showSelected = () => {
+    const items = [...S.selected].filter((item) => item && item.hidden);
+    if (!items.length) return false;
+    for (const item of items) item.hidden = false;
+    syncBarButtons();
+    refreshRows();
+    commit();
+    paint();
+    return true;
+  };
+  state.hideSelected = hideSelected;
+  state.showSelected = showSelected;
   let deleteArmed = false;
   let deleteTimer = null;
   const resetDeleteArm = () => {
@@ -935,27 +1390,19 @@ function setup(node) {
     requestDelete();
   });
   hideSelBtn.addEventListener("click", () => {
-    if (hiddenBatch.length) {
-      // 第二次点击：把上一批隐藏的全部恢复
-      for (const item of hiddenBatch) item.hidden = false;
-      hiddenBatch = [];
-    } else {
-      if (!S.selected.size) return;
-      hiddenBatch = [...S.selected];
-      for (const item of hiddenBatch) item.hidden = true;
-      S.selected.clear();
-    }
-    syncBarButtons();
-    refreshRows();
-    commit();
-    paint();
+    hideSelected();
   });
+  showSelBtn.addEventListener("click", () => {
+    showSelected();
+  });
+  tableBar.appendChild(multiBtn);
   tableBar.appendChild(allBoxesBtn);
   tableBar.appendChild(allBgBtn);
   tableBar.appendChild(delSelBtn);
   tableBar.appendChild(hideSelBtn);
+  tableBar.appendChild(showSelBtn);
 
-  const undoBtn = el("button", "yx-chip yx-undo", "撤销");
+  const undoBtn = el("button", "yx-chip yx-undo yx-ic yx-ic-undo", "撤销");
   undoBtn.type = "button";
   undoBtn.title = "撤销上一步操作（只影响这个节点，最多保留 60 步）";
   undoBtn.addEventListener("click", () => {
@@ -964,7 +1411,7 @@ function setup(node) {
   state.undoBtn = undoBtn;
   tableBar.appendChild(undoBtn);
 
-  const redoBtn = el("button", "yx-chip yx-undo", "重做");
+  const redoBtn = el("button", "yx-chip yx-undo yx-ic yx-ic-redo", "重做");
   redoBtn.type = "button";
   redoBtn.title = "重做刚才撤销的那一步（最多 60 步）";
   redoBtn.addEventListener("click", () => {
@@ -975,7 +1422,116 @@ function setup(node) {
 
   root.appendChild(tableBar);
 
-  root.appendChild(scroll);
+  root.appendChild(list);
+
+  // ---------------------------------------------------------------- 显示行数
+  // 背景图区、绘框区各有一个「显示行数」，各管各的：只统计自己下面带编号的行，
+  // 区块标题行和表头永远显示、永远不算在行数里。
+  // 这个数字优先级最高：填几行就最多露几行，超出的用滚轮看；填的数 ≥ 实际行数就是全部显示。
+  function makeRowsInput(which) {
+    const isBg = which === "bg";
+    const field = el("label", "yx-rows-field");
+    field.title = (isBg ? "背景图区的显示行数" : "绘框区的显示行数")
+      + "：只数这一区下面带编号的行（本区标题行和表头不算，永远显示）。"
+      + "填 0 就只剩标题行和表头；填的数大于等于实际行数时显示全部行；超出的部分在本区里滚轮查看。默认 20。";
+    const cap = el("span", "yx-rows-cap", "显示行数");
+    const input = el("input", "yx-rows-input");
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.maxLength = 3;
+    input.title = field.title;
+    input.value = String(isBg ? state.bgShowRows : state.boxShowRows);
+    field.appendChild(cap);
+    field.appendChild(input);
+    if (isBg) state.bgRowsInput = input;
+    else state.boxRowsInput = input;
+
+    const apply = () => {
+      const digits = String(input.value || "").replace(/[^0-9]/g, "");
+      const next = Math.min(LIST_ROW_LIMIT, digits ? parseInt(digits, 10) : 0);
+      input.value = String(next);
+      const key = isBg ? "bgShowRows" : "boxShowRows";
+      if (next === state[key]) return;
+      state[key] = next;
+      try {
+        node.properties = node.properties || {};
+        node.properties[isBg ? "yxBgRows" : "yxBoxRows"] = next;
+      } catch (_error) {
+        // 忽略
+      }
+      layout();
+      growNodeToFit();
+      node.graph?.setDirtyCanvas?.(true, true);
+    };
+    // 输入过程中只把非数字清掉，失焦 / 回车 / 内容变化时才真正套用，免得每敲一位就重排一次
+    input.addEventListener("input", () => {
+      input.value = String(input.value || "").replace(/[^0-9]/g, "").slice(0, 3);
+    });
+    input.addEventListener("change", apply);
+    input.addEventListener("blur", apply);
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      apply();
+      input.blur();
+    });
+    return field;
+  }
+
+  // 行数调大后界面会跟着变高：节点高度不够就撑到刚好够用（只加不减，不动你自己拉的尺寸）
+  const growNodeToFit = () => {
+    try {
+      const need = Math.round(neededNodeHeight());
+      const current = Math.round(Number(node?.size?.[1]) || 0);
+      if (node?.setSize && need > current) node.setSize([node.size[0], need]);
+    } catch (_error) {
+      // 忽略
+    }
+  };
+
+  // ---------------------------------------------------------------- 底部状态栏
+  // 只做只读信息展示：版本号 / 框与背景数量 / 画布尺寸 / 缩放 / 网格。
+  // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
+  const STATUS_VERSION = "1.0.3";
+  const statusBar = el("div", "yx-statusbar");
+  const sbLeft = el("div", "yx-sb-group");
+  const sbRight = el("div", "yx-sb-group");
+  const sbVer = el("span", "yx-sb-ver", `MOSS YXBOX v${STATUS_VERSION}`);
+  const sbCounts = el("span", null, "框 0 / 背景 0");
+  const sbCanvas = el("span", null, "");
+  const sbZoom = el("span", null, "");
+  const sbGrid = el("span", null, "");
+  sbLeft.appendChild(sbVer);
+  sbLeft.appendChild(el("span", "yx-sb-sep", "·"));
+  sbLeft.appendChild(sbCounts);
+  sbRight.appendChild(sbCanvas);
+  sbRight.appendChild(el("span", "yx-sb-sep", "·"));
+  sbRight.appendChild(sbZoom);
+  sbRight.appendChild(el("span", "yx-sb-sep", "·"));
+  sbRight.appendChild(sbGrid);
+  statusBar.appendChild(sbLeft);
+  statusBar.appendChild(sbRight);
+  root.appendChild(statusBar);
+
+  // 只在内容真的变了才写 DOM（paint 会频繁调用，这里做了字符串比较）
+  let statusCache = "";
+  const updateStatus = () => {
+    const boxCount = S.boxes.length;
+    const bgCount = S.bgs.filter(Boolean).length;
+    const zoom = Math.round((state.zoom || 1) * 100);
+    const gridOff = state.grid === false;
+    const key = `${boxCount}|${bgCount}|${S.width}|${S.height}|${zoom}|${gridOff}`;
+    if (statusCache === key) return;
+    statusCache = key;
+    sbCounts.textContent = `框 ${boxCount} / 背景 ${bgCount}`;
+    sbCanvas.textContent = `画布 ${S.width}×${S.height}`;
+    sbZoom.textContent = `缩放 ${zoom}%`;
+    sbGrid.textContent = gridOff ? "网格 关" : "网格 16";
+  };
+  state.updateStatus = updateStatus;
+  updateStatus();
 
   // ---------------------------------------------------------------- 右键菜单
   const menu = el("div", "yx-menu");
@@ -1032,15 +1588,27 @@ function setup(node) {
     closeMenu();
   };
 
-  const buildMenu = () => {
+  const buildMenu = (emptyOnly = false) => {
     menu.textContent = "";
     const boxes = selectedBoxes();
     const bgs = selectedBgs();
-    const title = el("div", "yx-menu-title");
-    title.textContent = S.selected.size === 1
+    const head = el("div", "yx-menu-title");
+    if (emptyOnly || !S.selected.size) {
+      // 没选中任何对象：只给一个「粘贴」入口，贴的是剪贴板里最后复制的那一个
+      head.textContent = "未选中对象";
+      menu.appendChild(head);
+      menuItem(clipboardItem ? `粘贴“${clipboardLabel()}”（Ctrl+V）` : "粘贴（剪贴板是空的）", () => {
+        if (pasteClipboard()) closeMenu();
+      });
+      return;
+    }
+    head.textContent = S.selected.size === 1
       ? (bgs.length ? "背景图" : "绘制框")
       : `已选中 ${S.selected.size} 个对象`;
-    menu.appendChild(title);
+    menu.appendChild(head);
+    // 菜单里显示的“对象名”，复制 / 复制并粘贴都用它
+    const first = [...S.selected][0];
+    const selLabel = itemLabel(first) + (S.selected.size > 1 ? ` 等 ${S.selected.size} 个` : "");
 
     menuItem("删除选中（点两次）", (item) => {
       if (item.dataset.armed === "1") {
@@ -1053,13 +1621,30 @@ function setup(node) {
       item.classList.add("yx-menu-armed");
     }, { danger: true });
 
-    menuItem("复制选中框（Ctrl+C）", () => {
-      if (!boxes.length) return;
-      copySelection();
+    // 隐藏选中：同样是两次确认，避免误点把画好的框藏起来；框和背景图都支持
+    menuItem("隐藏选中（点两次）", (item) => {
+      if (item.dataset.armed === "1") {
+        closeMenu();
+        hideSelected();
+        return;
+      }
+      item.dataset.armed = "1";
+      item.textContent = `确认隐藏 ${S.selected.size} 个?`;
+      item.classList.add("yx-menu-armed");
+    });
+
+    const hasClipboard = !!clipboardItem;
+    menuItem(`复制“${selLabel}”（Ctrl+C）`, () => {
+      if (!copySelection()) return;
       closeMenu();
     });
 
-    menuItem(boxClipboard.length ? "粘贴框（Ctrl+V）" : "粘贴框（剪贴板是空的）", () => {
+    menuItem(`复制并粘贴“${selLabel}”`, () => {
+      if (!copyAndPaste()) return;
+      closeMenu();
+    });
+
+    menuItem(hasClipboard ? `粘贴“${clipboardLabel()}”（Ctrl+V）` : "粘贴（剪贴板是空的）", () => {
       if (pasteClipboard()) closeMenu();
     });
 
@@ -1113,18 +1698,10 @@ function setup(node) {
     }
     if (state.drawOnly) return; // 只画框模式：右键不弹菜单
     if (state.editing) commitEdit();
-    const hit = hitTest(eventPoint(event));
-    if (hit && !S.selected.has(hit)) {
-      if (!state.multi) S.selected.clear();
-      S.selected.add(hit);
-      syncRows();
-      paint();
-    }
-    if (!S.selected.size) {
-      closeMenu();
-      return;
-    }
-    buildMenu();
+    // 右键不再顺手选中对象：必须先左键选中，右键才作用在已选中的对象上。
+    // 没选中任何东西时，右键只给「粘贴」——位置随便点都行。
+    const emptyOnly = S.selected.size === 0;
+    buildMenu(emptyOnly);
     const rect = root.getBoundingClientRect();
     const k = viewScale(root);
     menu.style.display = "block";
@@ -1264,6 +1841,91 @@ function setup(node) {
   const roundUp = (value, mult) => (mult ? Math.max(mult, Math.ceil(value / mult) * mult) : Math.round(value));
   const roundNear = (value, mult) => (mult ? Math.max(mult, Math.round(value / mult) * mult) : Math.round(value));
 
+  // 画布宽高 / 画布缩放长度受「画布宽高取整倍数」约束：箭头一次走一个倍数，手输值吸附到倍数；
+  // 倍数选「无」时两者都退回 1。列表里的框宽高 / x / y 不受这个参数管，箭头永远 ±1。
+  const canvasStep = () => {
+    const mult = multiple();
+    return mult >= 2 ? mult : 1;
+  };
+  const snapCanvasValue = (value, minValue = 16) => {
+    const raw = Math.round(Number(value));
+    if (!Number.isFinite(raw)) return null;
+    const step = canvasStep();
+    const snapped = step >= 2 ? Math.round(raw / step) * step : raw;
+    return clamp(snapped, minValue, MAX_SIZE);
+  };
+  // 原生数字控件：能拿到 DOM 输入框就把 step 写进去（上下箭头按 step 走），拿不到就退回 options.step
+  const canvasInput = (w) => w?.inputEl || w?.element?.querySelector?.("input") || null;
+  let lastCanvasStep = -1;
+  // 把步长同时写到 widget.options.step（经典画布的上下箭头）、widget.step、以及真实 input 的 step
+  // （Nodes 2.0 的「+ / −」按钮与浏览器数字框都读这几个），少写一处就会出现「改了倍数但还是按 16 走」
+  const applyStep = (w, step) => {
+    if (!w) return;
+    try {
+      if (w.options && w.options.step !== step) w.options.step = step;
+      if (w.step !== step) w.step = step;
+      const input = canvasInput(w);
+      if (input && input.step !== String(step)) input.step = String(step);
+    } catch (_error) {
+      // 忽略
+    }
+  };
+  const syncCanvasStep = (force = false) => {
+    const step = canvasStep();
+    if (!force && step === lastCanvasStep) return;
+    lastCanvasStep = step;
+    for (const w of [wWidth, wHeight, wLength]) applyStep(w, step);
+  };
+  // 手输的值吸附到倍数后再回填控件与输入框
+  const snapCanvasWidget = (w, minValue = 16) => {
+    if (!w) return false;
+    const snapped = snapCanvasValue(w.value, minValue);
+    if (snapped == null) return false;
+    const changed = Math.round(Number(w.value)) !== snapped;
+    if (changed) {
+      w.value = snapped;
+      const input = canvasInput(w);
+      if (input) input.value = String(snapped);
+    }
+    return changed;
+  };
+
+  // ComfyUI 后端给 INT 控件写死的默认步长（画布宽 / 画布高是 16，画布缩放长度是 1）。
+  // 前端 2.0 的「+ / −」和经典画布的上下箭头都可能按这个默认值走，改 options.step 不一定生效，
+  // 所以这里再兜一层：把点出来的值重新归一到「画布宽高取整倍数」上。
+  const CANVAS_ARROW_STEP = 16;
+  const canvasPrev = new Map();
+  const rememberCanvasValue = (w) => {
+    if (w) canvasPrev.set(w, Number(w.value));
+  };
+  const normalizeCanvasValue = (w, minValue = 16) => {
+    if (!w) return false;
+    const raw = Number(w.value);
+    if (!Number.isFinite(raw)) return false;
+    const step = canvasStep();
+    const prev = canvasPrev.get(w);
+    const diff = prev == null ? 0 : raw - prev;
+    const dir = Math.sign(diff);
+    const abs = Math.abs(diff);
+    let value = raw;
+    if (step >= 2 && dir && (abs === CANVAS_ARROW_STEP || abs < step)) {
+      // 箭头 / 加减号只走了后端默认的那一小步（或走不到我们的步长）：按我们的步长走一格
+      value = prev + dir * step;
+    } else if (step >= 2) {
+      // 手输：吸附到最近的倍数
+      value = Math.round(raw / step) * step;
+    }
+    value = clamp(Math.round(value), minValue, MAX_SIZE);
+    canvasPrev.set(w, value);
+    if (value !== raw) {
+      w.value = value;
+      const input = canvasInput(w);
+      if (input && input.value !== String(value)) input.value = String(value);
+    }
+    return value !== raw;
+  };
+  const normalizeCanvasWidget = (w, minValue = 16) => normalizeCanvasValue(w, minValue);
+
   const activeBg = () => S.bgs.find((bg) => bg && bg.image) || null;
 
   const aspectRatio = () => {
@@ -1323,6 +1985,7 @@ function setup(node) {
   const serialize = () => {
     const payload = {
       boxes: S.boxes.map((box) => ({
+        no: Number(box.__no) || 0,
         type: box.type,
         x: Math.round(box.x),
         y: Math.round(box.y),
@@ -1335,6 +1998,7 @@ function setup(node) {
         lock: { ...box.lock },
       })),
       bgs: S.bgs.filter(Boolean).map((bg) => ({
+        no: Number(bg.__no) || 0,
         slot: bg.slot,
         x: Math.round(bg.x),
         y: Math.round(bg.y),
@@ -1343,7 +2007,9 @@ function setup(node) {
         hidden: !!bg.hidden,
         desc: bg.desc || "",
         url: bg.url || "",
+        dim: clamp(Number(bg.dim) || 45, 1, 100),
         lockedCanvas: !!bg.lockedCanvas,
+        lockAll: !!bg.lockAll,
         lock: { ...bg.lock },
       })),
     };
@@ -1628,6 +2294,33 @@ function setup(node) {
   const clampItem = (item) => (item.isBg ? clampBg(item) : clampBox(item));
 
   // ---------------------------------------------------------------- rows
+  // 整体锁：一次把这一行所有字段全部锁上 / 全部解开（任何一项还锁着就显示成锁住）
+  const lockAllButton = (item, fields, title) => {
+    const button = el("button", "yx-lock yx-lock-all");
+    button.type = "button";
+    button.title = `${title}：点一下全锁 / 再点全解锁`;
+    const sync = () => {
+      const lockedCount = fields.filter((field) => !!item.lock?.[field]).length;
+      const all = lockedCount === fields.length;
+      button.textContent = lockedCount ? "🔒" : "🔓";
+      button.classList.toggle("yx-on", lockedCount > 0);
+      button.title = all
+        ? `${title}：已全部锁定，点这里全部解锁`
+        : `${title}：点一下把这一行所有字段都锁上`;
+    };
+    button.addEventListener("click", () => {
+      const all = fields.every((field) => !!item.lock?.[field]);
+      item.lock = item.lock || {};
+      for (const field of fields) item.lock[field] = !all;
+      syncRows();
+      paint();
+      commit();
+    });
+    sync();
+    button.__sync = sync;
+    return button;
+  };
+
   const lockButton = (item, field, title) => {
     const button = el("button", "yx-lock");
     button.type = "button";
@@ -1658,14 +2351,38 @@ function setup(node) {
     layout();
   };
 
+  // 行里的「宽松选中带」：从勾选框到 stopAt 这一格之前，点中间任何非控件的地方都算选中这一行
+  // （绘框区到「编号」为止，背景图区到「备注」之前为止）
+  const pickZone = (line, stopAt, item) => {
+    line.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!target || target.closest("input, textarea, select, button, .yx-drag")) return;
+      // 「编号」格子有自己的点击处理（点一下切换选中），这里再走一遍会一开一关、等于没反应
+      if (target.closest(".yx-num")) return;
+      if (!stopAt || !stopAt.getBoundingClientRect) return;
+      const edge = Number(stopAt.getBoundingClientRect().left) || 0;
+      if (!(edge > 0) || event.clientX >= edge) return;
+      // 勾选框那格是 <label>：不拦掉浏览器自带的勾选动作，会和这里的切换互相抵消
+      if (target.closest("label")) event.preventDefault();
+      // 已经选中的再点一次 = 取消选中（和画布上「再点一下取消」保持一致）
+      if (S.selected.has(item)) {
+        S.selected.delete(item);
+      } else {
+        if (!state.multi) S.selected.clear();
+        S.selected.add(item);
+      }
+      syncRows();
+      paint();
+    });
+  };
+
   const rowForBox = (box) => {
     const row = el("div", "yx-table yx-item-wrap");
     row.__item = box;
     row.__isBg = false;
     row.style.display = "flex";
     row.style.flexDirection = "column";
-    const line = el("div", "yx-row yx-item");
-
+    const line = el("div", "yx-row yx-item yx-box-grid");
     const drag = el("div", "yx-drag", "☰");
     drag.title = "拖动排序：越靠上 = 画面里越上层";
     const check = el("input", "yx-check");
@@ -1675,6 +2392,8 @@ function setup(node) {
     num.title = "点击只选中这一个框";
 
     const lockType = lockButton(box, "type", "类型");
+    // 选中带：勾选框 → 编号，这一段的空白处点一下也能选中
+    pickZone(line, lockType, box);
     const type = el("select", "yx-sel-type");
     for (const name of TYPES) {
       const option = el("option", null, name);
@@ -1705,11 +2424,11 @@ function setup(node) {
     const lockW = lockButton(box, "w", "宽");
     const wInput = el("input", "yx-in");
     wInput.type = "number";
-    wInput.step = String(GRID);
+    wInput.step = "1";
     const lockH = lockButton(box, "h", "高");
     const hInput = el("input", "yx-in");
     hInput.type = "number";
-    hInput.step = String(GRID);
+    hInput.step = "1";
 
     const lockColor = lockButton(box, "color", "颜色");
     const color = el("input", "yx-color");
@@ -1719,25 +2438,26 @@ function setup(node) {
     const lockX = lockButton(box, "x", "x 坐标");
     const xInput = el("input", "yx-in");
     xInput.type = "number";
-    xInput.step = String(GRID);
+    xInput.step = "1";
     xInput.title = "框左下角在画布里的 x 坐标（左下角为原点）";
     const lockY = lockButton(box, "y", "y 坐标");
     const yInput = el("input", "yx-in");
     yInput.type = "number";
-    yInput.step = String(GRID);
+    yInput.step = "1";
     yInput.title = "框左下角在画布里的 y 坐标（左下角为原点，向上为正）";
 
     const eye = el("button", "yx-icon", "👁");
     eye.type = "button";
     eye.title = "隐藏 / 显示这个框（隐藏后不参与提示词编译）";
-    const spacer = el("div", null, "");
+    const lockAll = lockAllButton(box, ["type", "text", "desc", "w", "h", "color", "x", "y"], "整体锁");
     const del = el("button", "yx-icon", "✕");
     del.type = "button";
     del.title = "删除这个框";
 
-    line.append(drag, check, num, lockType, type, lockText, textWrap, lockDesc, descWrap,
+    // 整体锁放在拖拽手柄右边第二格（和背景图区一致）；列间竖线按 BOX_SEP 的列位插入
+    appendCells(line, [drag, lockAll, check, num, lockType, type, lockText, textWrap, lockDesc, descWrap,
       lockW, wInput, lockH, hInput, lockColor, color, lockX, xInput, lockY, yInput,
-      eye, spacer, el("div", null, ""), el("div", null, ""), del);
+      eye, del], BOX_SEP);
     row.appendChild(line);
 
     const bigWrap = el("div", "yx-table");
@@ -1778,7 +2498,9 @@ function setup(node) {
       if (document.activeElement !== expandText) expandText.value = box.text || "";
       if (document.activeElement !== expandDesc) expandDesc.value = box.desc || "";
       const index = S.boxes.indexOf(box);
-      num.textContent = index >= 0 ? String(index + 1).padStart(2, "0") : "";
+      num.textContent = Number(box.__no) > 0
+        ? String(box.__no).padStart(2, "0")
+        : (index >= 0 ? String(index + 1).padStart(2, "0") : "");
 
       type.disabled = locked("type");
       text.disabled = locked("text");
@@ -1804,9 +2526,15 @@ function setup(node) {
       paint();
     });
 
-    num.addEventListener("click", () => {
-      S.selected.clear();
-      S.selected.add(box);
+    num.addEventListener("click", (event) => {
+      // 点编号：没选中就只选这一个；已经选中就取消选中
+      event.stopPropagation();
+      if (S.selected.has(box)) {
+        S.selected.delete(box);
+      } else {
+        S.selected.clear();
+        S.selected.add(box);
+      }
       syncRows();
       paint();
     });
@@ -1929,13 +2657,9 @@ function setup(node) {
     type.style.fontSize = "12px";
     type.style.color = BG_COLOR;
 
-    const lockText = el("div", null, "");
-    const textCell = el("div", null, "—");
-    textCell.style.fontSize = "11px";
-    textCell.style.color = "#7c7f8d";
-    textCell.style.textAlign = "center";
-
     const lockDesc = lockButton(bg, "desc", "备注");
+    // 选中带：勾选框 → 备注之前，这一段的空白处点一下也能选中这张背景图
+    pickZone(line, lockDesc, bg);
     const descWrap = el("div", "yx-field");
     const desc = el("input", "yx-in");
     desc.placeholder = "备注（不参与提示词）";
@@ -1947,17 +2671,20 @@ function setup(node) {
     const lockW = lockButton(bg, "w", "宽");
     const wInput = el("input", "yx-in");
     wInput.type = "number";
-    wInput.step = String(GRID);
+    wInput.step = "1";
     const lockH = lockButton(bg, "h", "高");
     const hInput = el("input", "yx-in");
     hInput.type = "number";
-    hInput.step = String(GRID);
+    hInput.step = "1";
 
-    const lockColor = el("div", null, "");
-    const colorCell = el("div", null, "");
-    colorCell.style.height = "14px";
-    colorCell.style.borderRadius = "3px";
-    colorCell.style.background = BG_COLOR;
+    // 背景图没有「颜色」，这一格改成「压暗百分比」：1~100，越大越暗（100 = 全黑）
+    const lockDim = el("div", null, "");
+    const dimInput = el("input", "yx-in yx-dim-in");
+    dimInput.type = "number";
+    dimInput.step = "1";
+    dimInput.min = "1";
+    dimInput.max = "100";
+    dimInput.title = "压暗百分比：1~100，越大越暗（100 就是全黑）。只影响这张背景图在画布和生成预览里的明暗";
 
     const lockX = lockButton(bg, "x", "x 坐标");
     const xInput = el("input", "yx-in");
@@ -1988,12 +2715,13 @@ function setup(node) {
     canvasBtn.style.fontSize = "10px";
     canvasBtn.style.lineHeight = "16px";
     canvasBtn.title = "直接作为画布：画布尺寸＝这张图的原始尺寸，图片铺满画布并整体锁定（点右侧「锁」列解锁）";
-    const lockAll = el("button", "yx-icon", "🔓");
+    const lockAll = el("button", "yx-icon yx-lock-all", "🔓");
     lockAll.type = "button";
 
-    line.append(drag, check, num, lockType, type, lockText, textCell, lockDesc, descWrap,
-      lockW, wInput, lockH, hInput, lockColor, colorCell, lockX, xInput, lockY, yInput,
-      eye, reset, canvasBtn, lockAll, del);
+    // 整体锁放在拖拽手柄右边第二格；列间竖线按 BG_SEP 的列位插入
+    appendCells(line, [drag, lockAll, check, num, lockType, type, lockDesc, descWrap,
+      lockW, wInput, lockH, hInput, lockDim, dimInput, lockX, xInput, lockY, yInput,
+      eye, reset, canvasBtn, del], BG_SEP);
     row.appendChild(line);
 
     const bigWrap = el("div", "yx-table");
@@ -2003,7 +2731,7 @@ function setup(node) {
     bigWrap.appendChild(expandDesc);
     row.appendChild(bigWrap);
 
-    const locked = (field) => !!bg.lock?.[field] || (!!bg.lockedCanvas && field !== "desc");
+    const locked = (field) => !!bg.lock?.[field] || !!bg.lockAll || (!!bg.lockedCanvas && field !== "desc");
     const edit = () => {
       paint();
       commit();
@@ -2033,15 +2761,8 @@ function setup(node) {
     });
 
     lockAll.addEventListener("click", () => {
-      bg.lockedCanvas = !bg.lockedCanvas;
-      if (bg.lockedCanvas) {
-        // 锁上时把这张图重新对齐成「铺满画布」
-        bg.x = 0;
-        bg.y = 0;
-        bg.w = S.width;
-        bg.h = S.height;
-        S.selected.delete(bg);
-      }
+      // 整体锁：只锁「能不能改」，绝不动这张图的位置和尺寸
+      bg.lockAll = !bg.lockAll;
       syncRow();
       edit();
     });
@@ -2058,10 +2779,11 @@ function setup(node) {
       hInput.value = Math.round(bg.h);
       xInput.value = Math.round(bg.x);
       yInput.value = Math.round(S.height - (bg.y + bg.h));
-      lockAll.textContent = bg.lockedCanvas ? "🔒" : "🔓";
-      lockAll.title = bg.lockedCanvas
-        ? "已作为画布：整张图被锁死（不能拖动 / 缩放），点这里解锁"
-        : "整体解锁状态：可以拖动 / 缩放这张背景图";
+      if (document.activeElement !== dimInput) dimInput.value = String(Math.round(Number(bg.dim) || 45));
+      lockAll.textContent = bg.lockAll ? "🔒" : "🔓";
+      lockAll.title = bg.lockAll
+        ? "整体已锁：宽 / 高 / x / y / 备注 / 压暗都不能改，也不能在画布上拖动缩放；点这里解锁"
+        : "整体锁：一键锁住这张图的宽 / 高 / x / y / 备注 / 压暗";
       line.classList.toggle("yx-canvas-row", !!bg.lockedCanvas);
       if (document.activeElement !== desc) desc.value = bg.desc || "";
       if (document.activeElement !== expandDesc) expandDesc.value = bg.desc || "";
@@ -2069,6 +2791,7 @@ function setup(node) {
       hInput.disabled = locked("h");
       xInput.disabled = locked("x");
       yInput.disabled = locked("y");
+      dimInput.disabled = locked("dim");
       desc.disabled = locked("desc");
       expandDesc.disabled = locked("desc");
       for (const button of line.querySelectorAll(".yx-lock")) button.__sync?.();
@@ -2084,9 +2807,15 @@ function setup(node) {
       syncRows();
       paint();
     });
-    num.addEventListener("click", () => {
-      S.selected.clear();
-      S.selected.add(bg);
+    num.addEventListener("click", (event) => {
+      // 点编号切换选中：已选中就取消（和绘框区保持一致）
+      event.stopPropagation();
+      if (S.selected.has(bg)) {
+        S.selected.delete(bg);
+      } else {
+        S.selected.clear();
+        S.selected.add(bg);
+      }
       syncRows();
       paint();
     });
@@ -2123,6 +2852,21 @@ function setup(node) {
       syncRow();
       edit();
     });
+
+    // 压暗百分比：1~100 的整数，步长 1（箭头一次改 1）
+    const applyDim = () => {
+      if (locked("dim")) {
+        dimInput.value = String(Math.round(Number(bg.dim) || 45));
+        return;
+      }
+      const raw = Number(dimInput.value);
+      bg.dim = clamp(Number.isFinite(raw) ? Math.round(raw) : 45, 1, 100);
+      dimInput.value = String(bg.dim);
+      syncRow();
+      edit();
+    };
+    dimInput.addEventListener("change", applyDim);
+    dimInput.addEventListener("blur", applyDim);
 
     desc.addEventListener("input", () => {
       if (locked("desc")) return;
@@ -2196,13 +2940,14 @@ function setup(node) {
       event.preventDefault();
       event.stopPropagation();
       const row = handle.closest(".yx-item-wrap");
-      if (!row || row.parentNode !== rows) return;
+      const container = isBg ? bgRows : rows;
+      if (!row || row.parentNode !== container) return;
       const startY = event.clientY;
       const pointerId = event.pointerId;
       let dragging = false;
 
       // 起手时只量一次几何：拖动期间行不动，这份数据一直有效
-      const group = Array.from(rows.children)
+      const group = Array.from(container.children)
         .filter((child) => child.classList
           && child.classList.contains("yx-item-wrap")
           && !!child.__isBg === isBg
@@ -2240,7 +2985,7 @@ function setup(node) {
           dragging = true;
           state.reorderActive = true;
           row.classList.add("yx-dragging");
-          rows.appendChild(line);
+          container.appendChild(line);
           place(target);
         }
         const index = indexAt(moveEvent.clientY);
@@ -2284,6 +3029,11 @@ function setup(node) {
   }
 
   function refreshRows() {
+    // 任何时候画列表，都先确认每个对象都有编号：一旦编上就跟着对象走，永不改号
+    fillMissingNos(S.boxes);
+    fillMissingNos(S.bgs);
+    // 行变了就允许重新量一次行高（行的内容不同高度可能略有差别）
+    state.rowMeasureRetry = 0;
     // 删除/撤销/换工作流之后，选中集合里可能残留已经不存在的对象，这里顺手清掉
     if (S.selected.size) {
       const alive = new Set([...S.boxes, ...S.bgs.filter(Boolean)]);
@@ -2292,22 +3042,32 @@ function setup(node) {
       }
     }
     rows.textContent = "";
+    bgRows.textContent = "";
     S.rows.clear();
-    S.bgs.filter(Boolean).forEach((bg, index) => {
-      bg.label = `B${index + 1}`;
+    const bgs = S.bgs.filter(Boolean);
+    bgs.forEach((bg) => {
+      // 编号用对象自己的号（新加的往后排），不再跟着列表顺序走
+      bg.label = `B${Number(bg.__no) || 0}`;
     });
-    if (S.boxes.length === 0 && S.bgs.filter(Boolean).length === 0) {
-      rows.appendChild(el("div", "yx-empty", "在画布空白处按住拖动即可画框；接入图片后会自动出现在最下面"));
+    // 两个分区各自一行标题：背景图区在上、绘框区在下，颜色也不同
+    // （标题行里除了文字还有本区的「显示行数」，所以只改文字，不重建整行）
+    bgTitleNote.textContent = bgs.length ? `${bgs.length} 张 · 不写进提示词` : "暂未接入背景图";
+    boxTitleNote.textContent = S.boxes.length ? `${S.boxes.length} 个框` : "还没有画框";
+    // 没有背景图时整块收起，不白占高度
+    const showBg = bgs.length > 0;
+    for (const item of [bgTitle, bgScroll]) item.style.display = showBg ? "" : "none";
+    if (S.boxes.length === 0 && bgs.length === 0) {
+      rows.appendChild(el("div", "yx-empty", "在画布空白处按住拖动即可画框；接入图片后会自动出现在背景图区"));
     }
     for (const box of S.boxes) {
       const row = rowForBox(box);
       S.rows.set(box, row);
       rows.appendChild(row);
     }
-    for (const bg of S.bgs.filter(Boolean)) {
+    for (const bg of bgs) {
       const row = rowForBg(bg);
       S.rows.set(bg, row);
-      rows.appendChild(row);
+      bgRows.appendChild(row);
     }
     refreshInfo();
     state.syncBar?.();
@@ -2325,31 +3085,124 @@ function setup(node) {
   // 一旦测量结果反过来影响高度，就会和 flex / 前端布局互相拉扯（抽搐、行被裁）。
   const layoutWidth = () => Math.max(240, stage.clientWidth || 480);
 
-  const LIST_ROW_H = 32; // 单行高度（含行间距）
-  const LIST_HEAD_H = 30; // 表头
-  const LIST_MIN_ROWS = 10; // 最多显示 10 行，超过 10 行才出滚动条
-  const LIST_BASE_H = LIST_ROW_H * LIST_MIN_ROWS + LIST_HEAD_H + 8; // 10 行 + 表头 + 余量（上限）
-  const LIST_FLOOR_H = LIST_ROW_H * 3 + LIST_HEAD_H + 8; // 少于 3 行时也留出 3 行的位置，别来回跳
+  const LIST_GAP = 3; // 列表里的行间距（.yx-table 的 gap）
+  const LIST_DEFAULT_ROWS = 20; // 默认显示行数（只数带编号的行）
+  const LIST_ROW_LIMIT = 999; // 「显示行数」输入框允许的最大值
+  // 行高不写死：行里有 26px 的下拉框，一行其实是 34px 左右，写死 32px 就会少露两行。
+  // 这里的值只作首帧的估值，真正的高度由 measureRowHeights() 量出来。
+  const FALLBACK_ROW_H = 34;
 
-  // 列表高度 = 行数 × 行高 + 表头；最多显示到 10 行，超过就滚动
-  // （不是「无论如何都占 10 行」，空列表时只占很小一块，节点初始高度才不会虚长）
-  const listNeeded = () => (rows.children.length || 0) * LIST_ROW_H + LIST_HEAD_H + 8;
-  const listCap = () => Math.max(LIST_BASE_H, Math.round((window.innerHeight || 900) * 0.42));
-  const listHeight = () => Math.round(clamp(listNeeded(), LIST_FLOOR_H, listCap()));
+  // 只数「带编号的行」：空的提示行也算一行（它也占高度），拖拽指示线不算
+  const countRows = (container) => {
+    if (!container || !container.children) return 0;
+    let count = 0;
+    for (const child of container.children) {
+      if (!child || !child.classList) continue;
+      if (child.classList.contains("yx-item-wrap") || child.classList.contains("yx-empty")) count += 1;
+    }
+    return count;
+  };
+  const firstRow = (container) => {
+    if (!container || !container.children) return null;
+    for (const child of container.children) {
+      if (!child || !child.classList) continue;
+      if (child.classList.contains("yx-item-wrap") || child.classList.contains("yx-empty")) return child;
+    }
+    return null;
+  };
 
-  // 画布高度：先给列表留够，再按窗口预算分配，最后才受画布长宽比约束
+  const bgRowCount = () => countRows(bgRows);
+  const boxRowCount = () => countRows(rows);
+  const bgRowHeight = () => state.bgRowH || FALLBACK_ROW_H;
+  const boxRowHeight = () => state.boxRowH || FALLBACK_ROW_H;
+  const bgShowRows = () => readRows(state.bgShowRows);
+  const boxShowRows = () => readRows(state.boxShowRows);
+
+  // 量一遍真实行高：行是固定结构（下拉框 26px + 上下 padding + 边框），量一次就够
+  const measureRowHeights = () => {
+    let changed = false;
+    try {
+      const bgH = Number(firstRow(bgRows)?.offsetHeight) || 0;
+      if (bgH > 0 && Math.abs(bgH - (state.bgRowH || 0)) > 0.5) {
+        state.bgRowH = bgH;
+        changed = true;
+      }
+      const boxH = Number(firstRow(rows)?.offsetHeight) || 0;
+      if (boxH > 0 && Math.abs(boxH - (state.boxRowH || 0)) > 0.5) {
+        state.boxRowH = boxH;
+        changed = true;
+      }
+    } catch (_error) {
+      // 忽略
+    }
+    return changed;
+  };
+
+  const headHeight = (head) => (Number(head?.offsetHeight) || 0) || 26;
+  const groupHeight = (group) => (Number(group?.offsetHeight) || 0) || 22;
+
+  // n 行内容需要的高度（行与行之间有 3px 间距）
+  const rowsHeight = (count, rowH) => (count <= 0 ? 0 : count * rowH + (count - 1) * LIST_GAP);
+  // 一块分区的高度：表头 + 露出来的那几行；行数超过「显示行数」就只算到上限
+  const panelHeight = (head, count, show, rowH) => {
+    const headH = headHeight(head);
+    if (count <= 0) return Math.round(headH);
+    const visible = Math.min(count, Math.max(0, Math.round(show)));
+    if (visible <= 0) return Math.round(headH);
+    return Math.round(headH + LIST_GAP + rowsHeight(visible, rowH));
+  };
+
+  // 列表总高度 = 背景图区标题 + 背景图区面板 + 绘框区标题 + 绘框区面板
+  const listSections = () => {
+    const parts = [];
+    if (bgRowCount() > 0) {
+      parts.push(groupHeight(bgTitle), panelHeight(bgHead, bgRowCount(), bgShowRows(), bgRowHeight()));
+    }
+    parts.push(groupHeight(boxTitle), panelHeight(tableHead, boxRowCount(), boxShowRows(), boxRowHeight()));
+    const sum = parts.reduce((total, value) => total + value, 0);
+    return Math.round(8 + sum + (parts.length - 1) * LIST_GAP);
+  };
+  // 把两个分区的行全部露出来需要的高度
+  const listNeeded = () => {
+    const parts = [];
+    if (bgRowCount() > 0) {
+      parts.push(groupHeight(bgTitle), headHeight(bgHead) + LIST_GAP + rowsHeight(bgRowCount(), bgRowHeight()));
+    }
+    parts.push(groupHeight(boxTitle), headHeight(tableHead) + LIST_GAP + rowsHeight(boxRowCount(), boxRowHeight()));
+    const sum = parts.reduce((total, value) => total + value, 0);
+    return Math.round(8 + sum + (parts.length - 1) * LIST_GAP);
+  };
+  // 按两个「显示行数」算出来的列表高度
+  const listBaseline = () => listSections();
+  // 列表能显示的最大高度 —— 只由两个显示行数决定，节点拉长拉短都不参与
+  const listCap = () => listBaseline();
+
+  // 画布区高度（v1.0.3 之前的老算法，已按要求还原）：
+  // 只按「画布长宽比 + 窗口预算」算出一个固定值，不跟节点高度联动，拉长压短都不影响它。
+  // 例外：「只画框」那一行最右边的「画布区高度」填了数字，就按那个数字显示（留空 = 老算法）。
   const stageHeight = () => {
+    const fixed = Math.round(Number(state.stageH) || 0);
+    if (fixed > 0) return Math.round(clamp(fixed, 140, 2600));
     const budget = clamp(Math.round((window.innerHeight || 900) * 0.34), 220, 460);
     const natural = Math.round((layoutWidth() * S.height) / Math.max(1, S.width));
     return Math.round(clamp(Math.min(natural, budget), 180, 520));
   };
+  // 兼容旧探针：老算法没有「基础 + 额外」两段
+  const stageBaseHeight = () => stageHeight();
+  const stageExtraHeight = () => 0;
+
+  // 整块 DOM 界面在节点内部的实际起始高度（各控件自然高度之和；量 offsetTop 会被挤压后的布局带偏）
+  const domWidgetTop = () => Math.round(nativeTop());
+
+  // 画布区以外被固定占用的高度：列表 + 顶部按钮行/工具条 + 描述框 + 内边距与留白
+  const stageReservedHeight = () => Math.round(listBaseline() + chromeHeight() + proseHeight() + 38 + 12);
 
   // 整块 DOM 界面需要的高度 = 顶部按钮行 + 工具条 + 画布 + 列表（全部是定值，杜绝互相拉扯）
   // chrome 只量顶部两条小按钮行（它们的高度只由文字决定，跟画布/列表无关，量了也不会回路）
   const chromeHeight = () => {
     const heights = [];
     try {
-      for (const item of [topBar, head, tableBar]) heights.push(Number(item?.offsetHeight) || 0);
+      for (const item of [topBar, head, toolsRow, tableBar, statusBar]) heights.push(Number(item?.offsetHeight) || 0);
     } catch (_error) {
       // 忽略
     }
@@ -2357,7 +3210,24 @@ function setup(node) {
     // 量不到（还没挂到 DOM）时按经验值；量到就把间距/内边距一并加足
     return Math.round(measured > 20 ? measured + 38 : 92);
   };
-  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseHeight() + 8);
+
+  // 「显示行数」档时整块界面的高度 —— 也是节点能缩到的最小高度
+  // 注意用「理想高度」而不是 stageHeight()：这个值要写进 --comfy-widget-min-height，
+  // 一旦把「拉长节点多出来的画布高度」也算进来，节点就再也缩不回去了。
+  // +38 = 上下内边距 + 状态栏下面留出的空白（旧渲染会裁掉最底部十几个像素）
+  const baseTotalHeight = () => Math.round(stageBaseHeight() + listBaseline() + chromeHeight() + proseHeight() + 38);
+
+  // 节点能缩到的最小高度（与 baseTotalHeight 一致）
+  const minTotalHeight = () => baseTotalHeight();
+
+  // 整个节点在「刚好够用」时的高度（只作显示用，不参与行数计算）
+  const nodeBaseline = () => Math.round(nativeTop() + baseTotalHeight() + 12);
+
+  // 列表高度：只由「显示行数」决定。拉长 / 缩短节点都不再影响它。
+  const listHeight = () => Math.round(listBaseline());
+
+  // 整块 DOM 界面的实际高度（列表按当前显示上限算，画布按理想高度 + 拉长多出来的空间）
+  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseHeight() + 38);
 
   // ComfyUI 两套前端（经典画布 / Nodes 2.0）都读这个高度：
   // 2.0 走 computeLayoutSize / --comfy-widget-min-height，经典画布走 computeSize 与元素自身高度
@@ -2375,17 +3245,57 @@ function setup(node) {
     return hosts;
   };
 
+  // 「画布区高度」输入框：留空 = 自动；填数字 = 固定高度（140–2600），
+  // 填得比节点剩下的空间还高时，一次性把节点撑高到刚好装下（只加不减，之后不再碰节点尺寸）
+  function applyStageHeightInput() {
+    const input = state.stageHInput;
+    if (!input) return;
+    const digits = String(input.value || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const parsed = digits ? parseInt(digits, 10) || 0 : 0;
+    const value = parsed > 0 ? Math.round(clamp(parsed, 140, 2600)) : 0;
+    state.stageH = value;
+    input.value = value ? String(value) : "";
+    node.properties = node.properties || {};
+    if (value) node.properties.yxStageH = value;
+    else delete node.properties.yxStageH;
+    layout();
+    try {
+      const need = Math.round(neededNodeHeight());
+      const current = Math.round(Number(node?.size?.[1]) || 0);
+      if (need > current && node?.setSize) node.setSize([node.size[0], need]);
+    } catch (_error) {
+      // 忽略
+    }
+    commit();
+  }
+  state.applyStageHeightInput = applyStageHeightInput;
+
+  const applyPanelSizes = () => {
+    try {
+      const bgPx = panelHeight(bgHead, bgRowCount(), bgShowRows(), bgRowHeight()) + "px";
+      const boxPx = panelHeight(tableHead, boxRowCount(), boxShowRows(), boxRowHeight()) + "px";
+      if (bgScroll.style.height !== bgPx) bgScroll.style.height = bgPx;
+      if (boxScroll.style.height !== boxPx) boxScroll.style.height = boxPx;
+    } catch (_error) {
+      // 忽略
+    }
+  };
+
   const applyDomLayoutSize = () => {
+    applyPanelSizes();
     const height = domDesiredHeight() + "px";
+    // 最小高度按「画布区压到 140」算：节点被拉高时它不跟着长，所以能再缩回来，
+    // 也不会出现「拉长 → 最小高度变大 → 再也缩不动」的死循环。
+    const minHeight = minTotalHeight() + "px";
     if (root.style.height !== height) root.style.height = height;
-    if (root.style.minHeight !== height) root.style.minHeight = height;
+    if (root.style.minHeight !== minHeight) root.style.minHeight = minHeight;
     for (const host of domHosts()) {
       try {
-        if (host.style.getPropertyValue("--comfy-widget-min-height") !== height) {
-          host.style.setProperty("--comfy-widget-min-height", height);
+        if (host.style.getPropertyValue("--comfy-widget-min-height") !== minHeight) {
+          host.style.setProperty("--comfy-widget-min-height", minHeight);
         }
-        if (host.style.getPropertyValue("--comfy-widget-max-height") !== height) {
-          host.style.setProperty("--comfy-widget-max-height", height);
+        if (host.style.getPropertyValue("--comfy-widget-max-height") !== "4000px") {
+          host.style.setProperty("--comfy-widget-max-height", "4000px");
         }
       } catch (_error) {
         // 极老的浏览器没有 CSS 变量，忽略
@@ -2425,8 +3335,9 @@ function setup(node) {
   // 一律用「各控件自然高度之和」估算：直接量 offsetTop 会被挤压后的布局带偏，
   // 反而形成「量到得越矮→节点越矮→挤得越狠」的死循环。
   const nativeTop = () => widgetStackHeight() + 46;
-  // 「刚好够用」的节点高度：描述框只按文字需要的高度算，不含你额外拉出来的空间
-  const baseNodeHeight = () => Math.round(widgetStackHeight("auto") + 46 + domDesiredHeight() + 14);
+  // 「刚好够用」的节点高度：只算基础高度（不含拉长节点多给画布的那部分），
+  // 否则每次载入都会把节点又撑高一点点
+  const baseNodeHeight = () => Math.round(widgetStackHeight("auto") + 46 + baseTotalHeight() + 14);
   const neededNodeHeight = () => baseNodeHeight();
 
   let fitPending = false;
@@ -2453,6 +3364,9 @@ function setup(node) {
   };
 
   const layout = () => {
+    // 画布宽高的数字控件可能晚于这里才挂到 DOM 上（2.0 还会重建输入框），
+    // 每次布局都强制重写一遍箭头步长，保证「倍数改了箭头立刻按新步长走」
+    syncCanvasStep(true);
     // 先按当前文本估一下描述框该多高（MIN~MAX），再排全景
     syncProseAuto();
     // 描述框高度：只跟节点高度走（拉高节点就变高，压回就变矮）
@@ -2460,13 +3374,36 @@ function setup(node) {
     // 画布高度：定值，不依赖容器
     const height = stageHeight() + "px";
     if (stage.style.height !== height) stage.style.height = height;
-    // 列表：至少 10 行；行多了在列表内部滚动，表头固定
-    const minH = listHeight() + "px";
-    if (scroll.style.minHeight !== minH) scroll.style.minHeight = minH;
-    if (scroll.style.maxHeight !== minH) scroll.style.maxHeight = minH;
+    // 行高是量出来的：第一帧可能还没量到，量到真实行高后再补一次布局，
+    // 保证「显示行数」算出来的高度刚好装下那么多行（不会出现最后一行只露半截）
+    if (measureRowHeights() && (state.rowMeasureRetry || 0) < 3) {
+      state.rowMeasureRetry = (state.rowMeasureRetry || 0) + 1;
+      const token = state.rowMeasureRetry;
+      setTimeout(() => {
+        if (state.rowMeasureRetry !== token) return;
+        try {
+          layout();
+        } catch (_error) {
+          // 忽略
+        }
+      }, 60);
+    }
     applyDomLayoutSize();
+    // 载入工作流后第一次布局：节点如果比「当前显示行数」需要的高度还矮，
+    // 一次性撑到刚好够用（只做一次；之后你拉长压短都不再碰节点尺寸）
+    if (state.pendingGrow && node?.setSize) {
+      state.pendingGrow = false;
+      try {
+        const need = Math.round(neededNodeHeight());
+        const current = Math.round(Number(node.size?.[1]) || 0);
+        if (need > current) node.setSize([node.size[0], need]);
+      } catch (_error) {
+        // 忽略
+      }
+    }
     fitNode();
     state.layoutReady = true;
+    state.updateStatus?.();
     paint();
   };
 
@@ -2513,7 +3450,14 @@ function setup(node) {
     for (let i = bgs.length - 1; i >= 0; i -= 1) {
       const bg = bgs[i];
       if (!bg.image || bg.hidden) continue;
-      drawBackground(ctx, bg, g, left, top, String(wFit?.value ?? "锁比例"), false);
+      drawBackground(ctx, bg, g, left, top, String(wFit?.value ?? "锁比例"), true);
+    }
+    // 背景图自己的编号也画在图上左上角（B1、B2…），字号规则和框的编号一样
+    for (let i = bgs.length - 1; i >= 0; i -= 1) {
+      const bg = bgs[i];
+      if (!bg.image || bg.hidden) continue;
+      const no = Number(bg.__no) || (Number(bg.slot) || 0) + 1;
+      drawTag(ctx, `B${no}`, left + bg.x * g.scale, top + bg.y * g.scale, itemColor(bg));
     }
     ctx.restore();
 
@@ -2556,6 +3500,9 @@ function setup(node) {
     ctx.strokeStyle = "rgba(255,255,255,0.16)";
     ctx.lineWidth = 1;
     ctx.strokeRect(left + 0.5, top + 0.5, cw - 1, chh - 1);
+
+    // 底部状态栏跟着画布一起刷新（内部有字符串比较，重复调用不写 DOM）
+    state.updateStatus?.();
   }
 
   function drawBackground(c, bg, g, left, top, fit, dim = true) {
@@ -2570,9 +3517,33 @@ function setup(node) {
     drawFitted(c, bg.image, bx, by, bwid, bhei, fit);
     c.restore();
     if (dim) {
-      c.fillStyle = "rgba(0,0,0,0.38)";
-      c.fillRect(bx, by, bwid, bhei);
+      // 每张背景图自己的「压暗百分比」：1~100，数字越大越暗（100 就是全黑）
+      const alpha = clamp(Number(bg.dim) || 45, 0, 100) / 100;
+      if (alpha > 0) {
+        c.fillStyle = `rgba(0,0,0,${alpha})`;
+        c.fillRect(bx, by, bwid, bhei);
+      }
     }
+  }
+
+  // 画布上的编号小牌子（框用 01、02…，背景图用 B1、B2…）。
+  // 字号只跟「画布缩放」走：滚轮放大画布时牌子跟着变大；工作流整体缩放不影响它（那样会越小越糊）。
+  function drawTag(c, text, px, py, color) {
+    const zoom = Math.max(1, Number(state.zoom) || 1);
+    const fs = Math.round(clamp(14 * zoom, 14, 64));
+    const pad = Math.round(fs * 0.38);
+    c.save();
+    c.font = `600 ${fs}px ui-monospace, monospace`;
+    c.textAlign = "left";
+    c.textBaseline = "middle";
+    const lw = c.measureText(text).width + pad * 2;
+    const lh = Math.round(fs * 1.45);
+    c.fillStyle = color;
+    c.fillRect(px, py, lw, lh);
+    c.fillStyle = "#0d0e12";
+    c.fillText(text, px + pad, py + lh / 2 + 0.5);
+    c.restore();
+    return lh;
   }
 
   function drawFitted(c, image, x, y, w, h, fit) {
@@ -2762,15 +3733,9 @@ function setup(node) {
     c.lineWidth = selected ? 2 : 1;
     c.strokeRect(x + 0.5, y + 0.5, Math.max(1, w - 1), Math.max(1, h - 1));
 
-    // 编号标签
-    const label = String(index + 1).padStart(2, "0");
-    c.font = "600 10px ui-monospace, monospace";
-    const lw = c.measureText(label).width + 8;
-    c.fillStyle = color;
-    c.fillRect(x, y, lw, 14);
-    c.fillStyle = "#0d0e12";
-    c.textBaseline = "middle";
-    c.fillText(label, x + 4, y + 7.5);
+    // 编号标签（用自己的编号：新画的往后排，不受列表顺序影响）
+    const label = String(Number(box.__no) || index + 1).padStart(2, "0");
+    const tagH = drawTag(c, label, x, y, color);
 
     // 框内文字 / 描述：字号跟着框在屏幕上的大小走，缩放节点时不会挤成一团
     const lines = [];
@@ -2781,12 +3746,13 @@ function setup(node) {
       const lineHeight = fontSize + 3;
       c.save();
       c.beginPath();
-      c.rect(x + 2, y + 16, Math.max(1, w - 4), Math.max(1, h - 18));
+      c.rect(x + 2, y + tagH + 2, Math.max(1, w - 4), Math.max(1, h - tagH - 6));
       c.clip();
       c.fillStyle = "rgba(240,240,245,0.92)";
       c.font = `${fontSize}px system-ui, sans-serif`;
       c.textBaseline = "top";
-      let ty = y + 18;
+      // 从编号牌子下沿再留 4px 开始排，避免牌子变大后把第一行文字的上半截裁掉
+      let ty = Math.round(y + tagH + 4);
       for (const line of lines) {
         const text = String(line);
         let rest = text;
@@ -2925,16 +3891,22 @@ function setup(node) {
 
   // ---------------------------------------------------------------- pointer
   const startCreate = (point) => {
-    const start = { x: snap(point.x), y: snap(point.y) };
+    const start = {
+      x: snap(clamp(point.x, 0, S.width)),
+      y: snap(clamp(point.y, 0, S.height)),
+    };
     const box = newBox(state.activeType, clamp(start.x, 0, S.width - MIN_BOX), clamp(start.y, 0, S.height - MIN_BOX), 0, 0);
     box.x = clamp(start.x, 0, S.width - MIN_BOX);
     box.y = clamp(start.y, 0, S.height - MIN_BOX);
     box.w = 0;
     box.h = 0;
     state.pending = box;
-    state.drag = { kind: "create", item: box, start: point, created: false };
+    // 起点也一起夹进画布：否则从留白处落笔时，横向拖到画布内才会有反应
+    state.drag = { kind: "create", item: box, start: start, created: false };
     paint();
   };
+  // 点是否落在画布（那张图片）范围里；画布区两侧 / 上下的黑色留白不算
+  const insideCanvas = (point) => point.x >= 0 && point.y >= 0 && point.x <= S.width && point.y <= S.height;
 
   const pointerDown = (event) => {
     if (event.button === 2) {
@@ -2952,11 +3924,14 @@ function setup(node) {
     }
     if (event.button !== 0) return;
     if (state.editing) commitEdit();
+    state.bgTap = null;
     const point = eventPoint(event);
     const g = geo();
 
     // 「只画框」打开，或按住 Shift / Alt：跳过所有选中与拖动，直接在按下处开一个新框
     if (state.drawOnly || event.shiftKey || event.altKey) {
+      // 画布两侧 / 上下的黑色留白不算画布：在那里落笔不画框（否则会出现「只能纵向拉、横向没反应」）
+      if (!insideCanvas(point)) return;
       startCreate(point);
       capture(event);
       return;
@@ -2965,7 +3940,7 @@ function setup(node) {
     // 1) 手柄：只对「已选中」的对象生效（未选中的对象不参与，避免点到附近就被选中）
     for (const item of itemsInZOrder()) {
       if (item.hidden) continue;
-      if (item.lockedCanvas) continue;
+      if (item.lockedCanvas || item.lockAll) continue;
       if (!S.selected.has(item)) continue;
       const handle = handleHit(item, point);
       if (handle) {
@@ -2982,13 +3957,10 @@ function setup(node) {
         // 已经当画布用的背景图：整块让给画框，不能被选中 / 拖动
         hit = null;
       } else if (!S.selected.has(hit)) {
-        // 普通背景图：只有贴着边缘的一圈算「选中它」，内部让给画框
-        const band = Math.max(4, 10 / g.scale);
-        const inBand = point.x <= hit.x + band
-          || point.x >= hit.x + hit.w - band
-          || point.y <= hit.y + band
-          || point.y >= hit.y + hit.h - band;
-        if (!inBand) hit = null;
+        // 普通背景图：单击即可选中。但按下去就拖动时仍然算「画新框」，
+        // 所以先不急着选中——记下它，松手时如果没拖出框就选中这张图。
+        state.bgTap = hit;
+        hit = null;
       }
     }
     if (hit) {
@@ -2999,7 +3971,7 @@ function setup(node) {
         syncRows();
         paint();
       }
-      const moving = [...S.selected].filter((item) => !item.hidden && !item.lockedCanvas);
+      const moving = [...S.selected].filter((item) => !item.hidden && !item.lockedCanvas && !item.lockAll);
       state.drag = {
         kind: "move",
         item: hit,
@@ -3013,7 +3985,12 @@ function setup(node) {
       return;
     }
 
-    // 3) 空白处：画新框
+    // 3) 空白处：画新框（只认画布范围内的空白，画布外的留白不算）
+    if (!insideCanvas(point)) {
+      // 画布外的黑色留白：单击一下 = 取消所有选中
+      state.deselectTap = true;
+      return;
+    }
     startCreate(point);
     capture(event);
   };
@@ -3050,6 +4027,7 @@ function setup(node) {
         const candidate = newBox(state.activeType, rect.x, rect.y,
           Math.max(MIN_BOX, rect.w), Math.max(MIN_BOX, rect.h));
         clampBox(candidate);
+        candidate.__no = nextLabelNo(S.boxes);
         S.boxes.unshift(candidate);
         S.selected.clear();
         S.selected.add(candidate);
@@ -3192,16 +4170,29 @@ function setup(node) {
       if (moved) paint();
       return;
     }
+    if (state.deselectTap) {
+      // 在画布外的黑色留白里单击：取消选中（不画框、不动任何对象）
+      state.deselectTap = false;
+      if (!state.drag && S.selected.size) {
+        S.selected.clear();
+        syncRows();
+        paint();
+      }
+    }
     const drag = state.drag;
     if (!drag) return;
     state.drag = null;
     if (drag.kind === "create") {
       const box = drag.item;
       if (!drag.created || box.w < MIN_BOX || box.h < MIN_BOX) {
-        // 只是点了一下空白：理解为「取消所有选中」，方便随后在背景图上直接画框
+        // 只是点了一下空白：理解为「取消所有选中」，方便随后在背景图上直接画框；
+        // 如果按下的位置正好在没选中的背景图上，这一下就是「单击选中那张图」
         if (!drag.created) {
+          const tapBg = state.bgTap;
           S.selected.clear();
+          if (tapBg) S.selected.add(tapBg);
           syncRows();
+          paint();
         }
         if (drag.created) {
           S.boxes = S.boxes.filter((item) => item !== box);
@@ -3212,6 +4203,7 @@ function setup(node) {
         clampBox(box);
         S.selected.clear();
         S.selected.add(box);
+        state.bgTap = null;
         refreshRows();
         commit();
       }
@@ -3247,6 +4239,7 @@ function setup(node) {
   const pointerCancel = () => {
     state.drag = null;
     state.pending = null;
+    state.deselectTap = false;
     paint();
   };
 
@@ -3296,7 +4289,7 @@ function setup(node) {
         }
         if (point.x >= item.x && point.x <= item.x + item.w
           && point.y >= item.y && point.y <= item.y + item.h) {
-          if (S.selected.has(item) && !item.lockedCanvas) cursor = "move";
+          if (S.selected.has(item) && !item.lockedCanvas && !item.lockAll) cursor = "move";
           break;
         }
       }
@@ -3344,6 +4337,7 @@ function setup(node) {
       zoomBadge.style.display = active ? "block" : "none";
       zoomBadge.textContent = `缩放 ${Math.round(zoom * 100)}%`;
     }
+    state.updateStatus?.();
   };
 
   // 滚轮缩放：以鼠标位置为中心，只改显示不动数据
@@ -3539,8 +4533,10 @@ function setup(node) {
     image.src = url;
   });
 
-  const ensureBgEntry = (slotIndex) => {
-    let bg = S.bgs.find((item) => item && item.slot === slotIndex);
+  // fresh = true 时总是新建一条（同一个输入口可以被复制出多份），否则按 slot 复用
+  // atTop = true：新接进来的图放到最前面（列表最上方 + 画布最上层）；恢复工作流时按存档顺序 push
+  const ensureBgEntry = (slotIndex, fresh = false, atTop = true) => {
+    let bg = fresh ? null : S.bgs.find((item) => item && item.slot === slotIndex);
     if (!bg) {
       bg = {
         slot: slotIndex,
@@ -3551,11 +4547,16 @@ function setup(node) {
         w: S.width, h: S.height,
         hidden: false,
         desc: "",
-        lock: emptyLocks(["w", "h", "x", "y", "desc"]),
+        dim: 45,
+        lockAll: false,
+        lock: emptyLocks(["w", "h", "x", "y", "desc", "dim"]),
         isBg: true,
-        label: `B${slotIndex + 1}`,
+        label: "",
       };
-      S.bgs.push(bg);
+      bg.__no = nextLabelNo(S.bgs);
+      bg.label = `B${bg.__no}`;
+      if (atTop) S.bgs.unshift(bg);
+      else S.bgs.push(bg);
     }
     return bg;
   };
@@ -3698,14 +4699,18 @@ function setup(node) {
         box.palette = Array.isArray(item.palette) ? item.palette.slice(0, 5) : [];
         box.hidden = !!item.hidden;
         for (const field of FIELDS) box.lock[field] = !!item.lock?.[field];
+        box.__no = Number(item.no) || 0;
         S.boxes.push(box);
       }
     }
     if (data && Array.isArray(data.bgs)) {
+      const usedSlots = new Set();
       for (const item of data.bgs) {
         if (!item || typeof item !== "object") continue;
         const slot = Number.isFinite(Number(item.slot)) ? Number(item.slot) : S.bgs.length;
-        const bg = ensureBgEntry(slot);
+        // 同一个输入口被复制出多份：后面的那些必须新建一条，不能覆盖第一条
+        const bg = ensureBgEntry(slot, usedSlots.has(slot), false);
+        usedSlots.add(slot);
         bg.x = Number(item.x) || 0;
         bg.y = Number(item.y) || 0;
         bg.w = Math.max(MIN_BOX, Number(item.w) || S.width);
@@ -3713,7 +4718,10 @@ function setup(node) {
         bg.hidden = !!item.hidden;
         bg.desc = String(item.desc || "");
         bg.lockedCanvas = !!item.lockedCanvas;
-        for (const field of ["w", "h", "x", "y", "desc"]) bg.lock[field] = !!item.lock?.[field];
+        bg.__no = Number(item.no) || 0;
+        bg.dim = clamp(Number(item.dim) || 45, 1, 100);
+        bg.lockAll = !!item.lockAll;
+        for (const field of ["w", "h", "x", "y", "desc", "dim"]) bg.lock[field] = !!item.lock?.[field];
         // 打开工作流时先用上次记住的地址把图显示出来，不必等执行
         const url = typeof item.url === "string" ? item.url : "";
         if (url && !bg.image) {
@@ -3732,12 +4740,17 @@ function setup(node) {
     }
     S.width = clampSize(numeric(wWidth, S.width));
     S.height = clampSize(numeric(wHeight, S.height));
+    // 老工作流没有编号：按列表顺序补 01、02…（新画的接着往后排）
+    fillMissingNos(S.boxes);
+    fillMissingNos(S.bgs);
     refreshRows();
     layout();
   };
 
   const configure = (info) => {
     if (!info) return;
+    // 这次布局会检查节点是否矮到装不下当前显示行数，装不下就一次性撑高
+    state.pendingGrow = true;
     const raw = Array.isArray(info.widgets_values) ? info.widgets_values : [];
     const index = (node.widgets || []).indexOf(wData);
     const value = index >= 0 ? raw[index] : undefined;
@@ -3750,7 +4763,20 @@ function setup(node) {
       }
     }
     restoreCanvas(data);
-    // 恢复描述框高度与文字（高度存在 node.properties 里，跨会话生效）
+    // 恢复两个分区的「显示行数」与描述框高度（都存在 node.properties 里，跨会话生效）
+    try {
+      state.bgShowRows = readRows(node.properties?.yxBgRows);
+      state.boxShowRows = readRows(node.properties?.yxBoxRows);
+      if (state.bgRowsInput) state.bgRowsInput.value = String(state.bgShowRows);
+      if (state.boxRowsInput) state.boxRowsInput.value = String(state.boxShowRows);
+      // 画布区高度：有存过就回填，没存过就留空（= 自动，和以前一样）
+      state.stageH = clamp(Math.round(Number(node.properties?.yxStageH) || 0), 0, 2600);
+      if (state.stageHInput) {
+        state.stageHInput.value = state.stageH ? String(state.stageH) : "";
+      }
+    } catch (_error) {
+      // 忽略
+    }
     try {
       state.proseH = clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200);
       applyProseBoxHeight();
@@ -3832,6 +4858,7 @@ function setup(node) {
       window.removeEventListener?.("pointerdown", state.proseDownHandler, true);
       window.removeEventListener?.("pointerup", state.proseUpHandler, true);
       window.removeEventListener?.("wheel", state.wheelZoomHandler, true);
+      if (state.wheelListHandler) document.removeEventListener("wheel", state.wheelListHandler, true);
     } catch (_error) {
       // 忽略
     }
@@ -3842,9 +4869,23 @@ function setup(node) {
   node.onConnectionsChange = function (type, index, connected, link_info, ioSlot) {
     const result = originalConnections?.call?.(this, type, index, connected, link_info, ioSlot);
     const slotIndex = ioSlot ? bgSlotIndex(ioSlot.name) : -1;
+    const isLayoutSlot = String(ioSlot?.name || "") === LAYOUT_INPUT_NAME;
     try {
       if (slotIndex >= 0 && connected === false) dropBackground(slotIndex);
       syncBackgrounds();
+      if (isLayoutSlot) {
+        // 换了一个上游文本框：等这一轮连接结算完，立刻按新接入的内容重来一遍
+        setTimeout(() => {
+          try {
+            lastLayoutText = null;
+            lastLayoutOk = false;
+            normalizeLayoutInputs();
+            syncLayoutSocket();
+          } catch (error) {
+            console.error("[MOSS YXBOX] 重新导入布局提示词失败", error);
+          }
+        }, 0);
+      }
       // 有些上游节点要过一会儿才把图挂出来，补两次重试
       if (connected) {
         setTimeout(() => { syncBackgrounds().catch(() => {}); }, 400);
@@ -3870,15 +4911,37 @@ function setup(node) {
     };
   };
 
-  onWidget(wWidth, () => applyModeSize());
-  onWidget(wHeight, () => applyModeSize());
+  // 画布宽高 / 缩放长度：点出来的值按「画布宽高取整倍数」归一（手输吸附、箭头按倍数走一格），
+  // 再交给尺寸逻辑；改倍数时同步这几个控件的箭头步长并重新归一。
+  [wWidth, wHeight, wLength].forEach(rememberCanvasValue);
+  onWidget(wWidth, () => {
+    syncCanvasStep();
+    normalizeCanvasWidget(wWidth);
+    applyModeSize();
+  });
+  onWidget(wHeight, () => {
+    syncCanvasStep();
+    normalizeCanvasWidget(wHeight);
+    applyModeSize();
+  });
   onWidget(wMode, () => applyModeSize());
   onWidget(wAspect, () => applyModeSize());
   onWidget(wPropW, () => applyModeSize());
   onWidget(wPropH, () => applyModeSize());
   onWidget(wBasis, () => applyModeSize());
-  onWidget(wLength, () => applyModeSize());
-  onWidget(wMult, () => applyModeSize());
+  onWidget(wLength, () => {
+    syncCanvasStep(true);
+    normalizeCanvasWidget(wLength, 4);
+    applyModeSize();
+  });
+  onWidget(wMult, () => {
+    // 改倍数必须强制重写一遍步长：2.0 会重建数字框的 DOM，光靠「步长没变就跳过」会漏掉新元素
+    syncCanvasStep(true);
+    normalizeCanvasWidget(wWidth);
+    normalizeCanvasWidget(wHeight);
+    normalizeCanvasWidget(wLength, 4);
+    applyModeSize();
+  });
   onWidget(wFit, () => paint());
 
   // 节点缩放 / 尺寸变化时先重算舞台高度，再按新的显示尺寸重画
@@ -3888,6 +4951,27 @@ function setup(node) {
   let lastProseText = null;
   let lastNodeH = -1;
   let lastAppliedProse = -1;
+  // 节点高度变化 → 列表显示上限变化 → 防抖重排（拖节点时不想每帧都重排）
+  let lastListCap = -1;
+  let listRelayoutTimer = 0;
+  let listRelayoutWindow = 0;
+  let listRelayoutCount = 0;
+  const scheduleListRelayout = () => {
+    // 简单的限流：同一秒内最多重排 6 次，防止和前端的高度计算互相推着走
+    const now = Date.now();
+    if (now - listRelayoutWindow > 1200) {
+      listRelayoutWindow = now;
+      listRelayoutCount = 0;
+    }
+    if (listRelayoutCount >= 6) return false;
+    listRelayoutCount += 1;
+    if (listRelayoutTimer) clearTimeout(listRelayoutTimer);
+    listRelayoutTimer = setTimeout(() => {
+      listRelayoutTimer = 0;
+      layout();
+    }, 120);
+    return true;
+  };
   const tick = () => {
     if (!canvas.isConnected) return;
     // 「布局提示词输入」接上文本后实时导入（文本没变就什么都不做）
@@ -3895,6 +4979,12 @@ function setup(node) {
       syncLayoutSocket();
     } catch (error) {
       console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
+    }
+    // 旧渲染把隐藏控件画成的小圆点：工作流加载完再补几次清理
+    try {
+      stripHiddenInputs();
+    } catch (error) {
+      console.error("[MOSS YXBOX] 清理隐藏参数的接入点失败", error);
     }
     // 正在拖拽排序时跳过测量：避免和拖拽抢着触发布局计算
     if (state.reorderActive) {
@@ -3918,6 +5008,17 @@ function setup(node) {
           return;
         }
       }
+    }
+    // 节点被拉高 / 压回：列表的显示上限跟着变（只读取节点高度，不反推节点高度）
+    try {
+      const cap = listCap();
+      if (lastListCap < 0) {
+        lastListCap = cap;
+      } else if (cap !== lastListCap && scheduleListRelayout()) {
+        lastListCap = cap;
+      }
+    } catch (error) {
+      console.error("[MOSS YXBOX] 列表高度重排失败", error);
     }
     // 只用「宽度」变化触发重排；不再看容器高度，否则改高度会反过来又触发重排，
     // 每帧在两个高度之间来回跳（表现就是整个节点上下抽搐）
@@ -4097,6 +5198,8 @@ function setup(node) {
     }
     const space = String(data.bbox_coord_space || "abs").toLowerCase();
     const fmt = String(data.bbox_format || "xyxy").toLowerCase();
+    // 草稿如果声明了左下角原点（第一象限），导入时把 y 翻成画布内部的左上原点
+    const bottomLeft = /bottom|下/.test(String(data.bbox_origin || "").toLowerCase());
     // 编译后的格式：原点在画布中心、yxyx；其它一律当草稿的左上原点 xyxy 处理
     const compiled = space.indexOf("centralized") >= 0 || fmt === "yxyx";
     // 来源尺寸：显式 width/height 优先；没有的话（比如只给 elements 的草稿）按所有 bbox 的最大范围推断
@@ -4172,6 +5275,11 @@ function setup(node) {
         y2 = snap(y2, srcH, ymax, true);
       } else {
         [x1, y1, x2, y2] = values;
+        if (bottomLeft) {
+          // 左下角原点 → 左上角原点
+          y1 = srcH - y1;
+          y2 = srcH - y2;
+        }
       }
       if (x1 > x2) [x1, x2] = [x2, x1];
       if (y1 > y2) [y1, y2] = [y2, y1];
@@ -4252,6 +5360,24 @@ function setup(node) {
     node.graph?.setDirtyCanvas?.(true, true);
   };
 
+  // 纯自然语言（没有 items）= 只要整体描述：把上一次 JSON 带进来的框和选择一起清掉，
+  // 否则从「JSON 提示词」换成「普通提示词」时，画布上会残留上一份的框。
+  const clearBoxesForCaption = (caption) => {
+    const changed = S.boxes.length > 0 || S.selected.size > 0;
+    if (S.boxes.length) S.boxes = [];
+    S.selected.clear();
+    const target = captionWidget();
+    if (target) target.value = caption ?? "";
+    if (changed || target) {
+      refreshRows();
+      layout();
+      commit();
+      paint();
+      node.graph?.setDirtyCanvas?.(true, true);
+    }
+    return true;
+  };
+
   const openImport = () => {
     openModal({
       title: "导入布局提示词",
@@ -4269,8 +5395,7 @@ function setup(node) {
               return;
             }
             if (parsed.kind === "caption") {
-              if (captionWidget()) captionWidget().value = parsed.caption;
-              commit();
+              clearBoxesForCaption(parsed.caption);
               close();
               return;
             }
@@ -4296,7 +5421,45 @@ function setup(node) {
 
   // ---------------------------------------------------------------- 布局提示词输入口（实时导入）
   const LAYOUT_INPUT_NAME = "布局提示词输入";
-  const layoutSlot = () => (node.inputs || []).find((item) => String(item?.name) === LAYOUT_INPUT_NAME);
+  const layoutSlots = () => (node.inputs || []).filter((item) => String(item?.name) === LAYOUT_INPUT_NAME);
+
+  // 旧工作流里这个输入曾经是「控件→自动派生接入点」，新版改成纯接入点后，
+  // 加载时可能同时留下「派生的空槽」和「真正的接入点」两个槽位。
+  // 优先取已连线的那一个，其次取真正的 socket（派生槽带 widget 标记），最后才退回第一个。
+  const layoutSlot = () => {
+    const slots = layoutSlots();
+    if (!slots.length) return null;
+    const linked = slots.find((item) => item.link != null);
+    if (linked) return linked;
+    return slots.find((item) => !item.widget) || slots[0];
+  };
+
+  // 把多余的重复槽位删掉，只留一个有效接入点。
+  // 只动「没连线」的重复项；ComfyUI 的 removeInput 会保持其它输入的连线索引不变。
+  let layoutSlotCount = -1;
+  const normalizeLayoutInputs = () => {
+    const slots = layoutSlots();
+    if (slots.length === layoutSlotCount) return;
+    layoutSlotCount = slots.length;
+    if (slots.length < 2) return;
+    const keep = layoutSlot();
+    let guard = slots.length;
+    for (const slot of slots) {
+      if (guard-- <= 0) break;
+      if (slot === keep || slot.link != null) continue;
+      const at = (node.inputs || []).indexOf(slot);
+      if (at < 0) continue;
+      try {
+        if (typeof node.removeInput === "function") node.removeInput(at);
+        else node.inputs.splice(at, 1);
+      } catch (error) {
+        console.warn("[MOSS YXBOX] 清理重复的接入点失败", error);
+      }
+    }
+    layoutSlotCount = layoutSlots().length;
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
 
   // 取上游文本：优先读上游节点自己的文本控件（边打字边变，最实时），
   // 读不到再退到执行结果里的 STRING 输出（比如某个节点算出来的文本）
@@ -4336,11 +5499,8 @@ function setup(node) {
     const parsed = parseLayoutText(text);
     if (parsed.error) return false;
     if (parsed.kind === "caption") {
-      const target = captionWidget();
-      if (target && String(target.value ?? "") !== parsed.caption) {
-        target.value = parsed.caption;
-        commit();
-      }
+      // 上游换成普通自然语言提示词：只留整体描述，把上一份 JSON 的框清掉
+      clearBoxesForCaption(parsed.caption);
       return true;
     }
     const srcW = Math.max(1, Number(parsed.width) || S.width);
@@ -4399,21 +5559,31 @@ function setup(node) {
   };
 
   let lastLayoutText = null;
+  let lastLayoutOk = false;
+  let lastLayoutTry = 0;
   const syncLayoutSocket = () => {
+    // 先清掉旧工作流留下的重复槽位，保证下面拿到的是真正接着线的那一个
+    normalizeLayoutInputs();
     const slot = layoutSlot();
     if (!slot || slot.link == null) {
       lastLayoutText = null;
+      lastLayoutOk = false;
       return;
     }
     const text = upstreamLayoutText();
-    if (text == null) return;
-    if (text === lastLayoutText) return;
-    lastLayoutText = text;
+    if (text == null) return;    if (text === lastLayoutText) {
+      // 上一次没导入成功就过一会儿再试，成功了就不重复干活
+      if (lastLayoutOk || Date.now() - lastLayoutTry < 1200) return;
+    }
+    lastLayoutTry = Date.now();
     if (!text.trim()) {
+      lastLayoutText = text;
+      lastLayoutOk = true;
       clearFromSocket();
       return;
     }
-    applyLayoutText(text);
+    lastLayoutText = text;
+    lastLayoutOk = applyLayoutText(text);
   };
 
   // ---------------------------------------------------------------- 预设（保存 / 管理 / 加载）
@@ -5045,7 +6215,7 @@ function setup(node) {
     serialize: false,
     hideOnZoom: false,
     // 2.0 前端会优先读这三个，拿不到才回落到 CSS 变量
-    // 最小值给得很小：允许你把节点拖小（拖小后这块区自己出现滚动条，而不是把节点顶回去）
+    // 与 v1.0.3 之前一致：最小值只给 120，画布区高度不参与「最小高度」推算
     getMinHeight: () => 120,
     getMaxHeight: () => 4000,
     getHeight: () => domDesiredHeight(),
@@ -5091,6 +6261,47 @@ function setup(node) {
   state.refreshRows = refreshRows;
   state.applyModeSize = applyModeSize;
   state.applyCanvasSize = applyCanvasSize;
+  // 布局探针：只给自测脚本读数字用，不参与界面
+  state.layoutProbe = {
+    listNeeded, listBaseline, listCap, listHeight,
+    baseTotalHeight, nodeBaseline, domDesiredHeight,
+    stageBaseHeight, stageExtraHeight, stageHeight,
+    domWidgetTop, stageReservedHeight, minTotalHeight,
+    canvasStep, snapCanvasValue, syncCanvasStep, normalizeCanvasValue, rememberCanvasValue,
+    bgShowRows, boxShowRows, bgRowHeight, boxRowHeight, panelHeight, countRows,
+    tableHead, bgHead, rows, bgRows, bgScroll, boxScroll,
+    bgRowsInput: state.bgRowsInput, boxRowsInput: state.boxRowsInput,
+    stageHInput: state.stageHInput, applyStageHeightInput,
+    wWidth, wHeight, wLength, wMult,
+    tableBar, hideSelBtn, showSelBtn, toolsRow, multiBtn, headBar: head, stageHField,
+    drawTag, itemColor,
+    nextLabelNo, fillMissingNos,
+  };
+  state.canvasStep = canvasStep;
+  state.snapCanvasValue = snapCanvasValue;
+  state.setShowRows = (value) => {
+    const n = Number(value);
+    const rows = Number.isFinite(n) ? Math.max(0, Math.min(LIST_ROW_LIMIT, Math.round(n))) : LIST_DEFAULT_ROWS;
+    state.bgShowRows = rows;
+    state.boxShowRows = rows;
+    if (state.bgRowsInput) state.bgRowsInput.value = String(rows);
+    if (state.boxRowsInput) state.boxRowsInput.value = String(rows);
+    layout();
+  };
+  state.setBgShowRows = (value) => {
+    const n = Number(value);
+    state.bgShowRows = Number.isFinite(n) ? Math.max(0, Math.min(LIST_ROW_LIMIT, Math.round(n))) : LIST_DEFAULT_ROWS;
+    if (state.bgRowsInput) state.bgRowsInput.value = String(state.bgShowRows);
+    layout();
+  };
+  state.setBoxShowRows = (value) => {
+    const n = Number(value);
+    state.boxShowRows = Number.isFinite(n) ? Math.max(0, Math.min(LIST_ROW_LIMIT, Math.round(n))) : LIST_DEFAULT_ROWS;
+    if (state.boxRowsInput) state.boxRowsInput.value = String(state.boxShowRows);
+    layout();
+  };
+  state.root = root;
+  state.wheelHandler = onWheelCapture;
   state.serialize = serialize;
   state.commit = commit;
   state.paint = paint;
@@ -5112,7 +6323,7 @@ function setup(node) {
   state.neededNodeHeight = neededNodeHeight;
   state.domDesiredHeight = domDesiredHeight;
   state.closeModal = closeModal;
-  state.scrollEl = scroll;
+  state.scrollEl = bgScroll;
   state.rowsEl = rows;
   state.ensureBgInputs = ensureBgInputs;
   state.geo = geo;
@@ -5120,6 +6331,8 @@ function setup(node) {
   state.redo = redoStep;
   state.copyBoxes = copySelection;
   state.pasteBoxes = pasteClipboard;
+  state.itemLabel = itemLabel;
+  state.clipboardLabel = clipboardLabel;
   state.resetUndo = resetUndo;
   syncBarButtons();
   resetUndo();

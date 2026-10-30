@@ -1,6 +1,6 @@
 [project]
 name = "moss-yxbox"
-version = "1.0.2"
+version = "1.0.3"
 description = "把 ComfyUI 官方「创建边界框」与「MOSS-Image 布局提示词」融合成单节点的中文画布排版工作台"
 license = { text = "MIT" }
 readme = "README.md"

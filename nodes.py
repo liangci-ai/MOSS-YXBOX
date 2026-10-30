@@ -15,6 +15,7 @@
 
 import hashlib
 import json
+import re
 import math
 
 import numpy as np
@@ -176,6 +177,9 @@ def _parse_canvas(raw):
                 "slot": int(item["slot"]) if isinstance(item.get("slot"), int) else index,
                 "x": x, "y": y, "w": w, "h": h,
                 "hidden": bool(item.get("hidden")),
+                # 压暗百分比：1~100，越大越暗；没存过按 45（和以前固定压暗的效果一致）
+                "dim": max(1, min(100, int(item.get("dim") or 45))),
+                "lockedCanvas": bool(item.get("lockedCanvas")),
             })
     elif isinstance(data.get("bg"), dict):
         # 兼容上一版单张背景图的数据
@@ -359,6 +363,14 @@ def _compose_backgrounds(bg_arrays, bg_entries, width, height, fit):
             x, y, w, h = 0.0, 0.0, float(width), float(height)
         image = Image.fromarray((array * 255.0).astype(np.uint8)).convert("RGB")
         fitted = _fit_image(image, w, h, fit)
+        # 每张背景图自己的「压暗百分比」：1~100，越大越暗（100 就是全黑）
+        try:
+            dim = max(1, min(100, int(rect.get("dim") or 45)))
+        except Exception:
+            dim = 45
+        if dim > 1:
+            shade = Image.new("RGB", fitted.size, (0, 0, 0))
+            fitted = Image.blend(fitted, shade, dim / 100.0)
         canvas.paste(fitted, (int(round(x)), int(round(y))))
     return np.asarray(canvas).astype(np.float32) / 255.0
 
@@ -488,6 +500,48 @@ def _compile_layout_local(prompt, elements, boxes, width, height):
     return json.dumps(layout, ensure_ascii=False, separators=(",", ":"))
 
 
+def _layout_draft(caption, regions, width, height):
+    """未编译的草稿 JSON：画布宽高 + 第一象限（左下角原点）像素坐标，缩进排版方便人读。"""
+    items = []
+    for region in regions:
+        kind = str(region.get("type") or "obj")
+        label = "text" if kind == "text" else ("character" if kind == "character" else "object")
+        x = float(region.get("x", 0.0)) * width
+        y = float(region.get("y", 0.0)) * height
+        w = float(region.get("w", 0.0)) * width
+        h = float(region.get("h", 0.0)) * height
+        item = {
+            "label": label,
+            "caption": str(region.get("desc", "") or ""),
+        }
+        if label == "text":
+            item["text"] = str(region.get("text", "") or "")
+        item["bbox"] = [
+            int(round(x)), int(round(y)), int(round(x + w)), int(round(y + h)),
+        ]
+        palette = [c.upper() for c in (region.get("palette") or []) if isinstance(c, str) and c][:5]
+        if palette:
+            item["color_palette"] = palette
+        items.append(item)
+
+    draft = {
+        "summary": {"caption": (caption or "").strip()},
+        "canvas": {"width": int(width), "height": int(height)},
+        "items": items,
+        "bbox_coord_space": "abs",
+        "bbox_format": "xyxy",
+        "bbox_origin": "bottom-left",
+    }
+    text = json.dumps(draft, ensure_ascii=False, indent=2)
+    # json 默认会把 [1,2,3,4] / ["#a","#b"] 拆成很多行，读起来反而乱；把这类扁平数组压回一行
+    flat = r'(?:"(?:[^"\\]|\\.)*"|[-+\d.eE]+)'
+    return re.sub(
+        r"\[\s*(" + flat + r"(?:\s*,\s*" + flat + r")*)\s*\]",
+        lambda match: "[" + ", ".join(part.strip() for part in match.group(1).split(",")) + "]",
+        text,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 预览图
 # ---------------------------------------------------------------------------
@@ -523,9 +577,8 @@ def _preview_local(regions, width, height, bg_np=None):
     out_h = max(64, int(round(height * scale)))
 
     if bg_np is not None:
+        # 压暗已经在 _compose_backgrounds 里按每张背景图自己的百分比做过了，这里不再重复压暗
         image = Image.fromarray((bg_np * 255).astype(np.uint8)).convert("RGB").resize((out_w, out_h))
-        shade = Image.new("RGB", (out_w, out_h), (0, 0, 0))
-        image = Image.blend(image, shade, 0.45)
     else:
         image = Image.new("RGB", (out_w, out_h), (24, 24, 27))
 
@@ -581,8 +634,8 @@ def _fractions(regions):
 class MOSS_YXBOX:
     CATEGORY = "MOSS"
     FUNCTION = "run"
-    RETURN_TYPES = ("STRING", "IMAGE", "BOUNDING_BOX", "ARRAY", "INT", "INT")
-    RETURN_NAMES = ("布局提示词", "预览图", "边界框", "元素列表", "宽", "高")
+    RETURN_TYPES = ("STRING", "IMAGE", "BOUNDING_BOX", "ARRAY", "INT", "INT", "STRING")
+    RETURN_NAMES = ("布局提示词", "预览图", "边界框", "元素列表", "宽", "高", "草稿JSON")
     OUTPUT_NODE = True
 
     @classmethod
@@ -604,11 +657,15 @@ class MOSS_YXBOX:
                 }),
                 "画布宽": ("INT", {
                     "default": 1536, "min": 16, "max": 16384, "step": 16,
-                    "tooltip": "只在「画布尺寸来源＝自定义尺寸」时生效：画布宽度（像素），建议取 16 的倍数。",
+                    "tooltip": "只在「画布尺寸来源＝自定义尺寸」时生效：画布宽度（像素），也就是最终生成图片的宽度。\n"
+                               "MOSS-Image 要求画布宽高是 16 的倍数；这里箭头的步长 =「画布宽高取整倍数」"
+                               "（默认 16，选「无」时为 1），手输的数会自动吸附到该倍数。",
                 }),
                 "画布高": ("INT", {
                     "default": 1536, "min": 16, "max": 16384, "step": 16,
-                    "tooltip": "只在「画布尺寸来源＝自定义尺寸」时生效：画布高度（像素），建议取 16 的倍数。",
+                    "tooltip": "只在「画布尺寸来源＝自定义尺寸」时生效：画布高度（像素），也就是最终生成图片的高度。\n"
+                               "MOSS-Image 要求画布宽高是 16 的倍数；这里箭头的步长 =「画布宽高取整倍数」"
+                               "（默认 16，选「无」时为 1），手输的数会自动吸附到该倍数。",
                 }),
                 "画布比例": (ASPECT_LIST, {
                     "default": "自定义",
@@ -647,9 +704,14 @@ class MOSS_YXBOX:
                                "· 裁切 —— 等比放大铺满矩形，多出的部分裁掉。\n"
                                "· 锁比例 —— 拖任何控制点缩放矩形时，图片始终保持原长宽比（不变形）。",
                 }),
-                "宽高取整倍数": (MULT_LIST, {
+                "画布宽高取整倍数": (MULT_LIST, {
                     "default": "16",
-                    "tooltip": "画布宽高最终取整到这个倍数。MOSS 的要求是 16，除非你有特别理由，否则别改。",
+                    "tooltip": "控制画布宽高（＝最终生成图片的宽高）按哪个倍数取整。\n"
+                               "· MOSS-Image 要求画布宽高是 16 的倍数，默认 16，除非你有特别理由，否则别改。\n"
+                               "· 它决定「画布宽 / 画布高 / 画布缩放长度」三个数字框两侧箭头的步长："
+                               "选 16 时点一下 ±16，选 32 时 ±32；选「无」时不取整，箭头步长退回 1。\n"
+                               "· 这三个框里手输的数也会自动吸附到该倍数。\n"
+                               "· 它只管画布尺寸，不管列表里框的宽 / 高 / x / y（框是任意整数像素，箭头永远 ±1）。",
                 }),
                 "画布数据": ("STRING", {
                     "default": "{}",
@@ -695,7 +757,7 @@ class MOSS_YXBOX:
 
     def run(self, 整体描述="", 画布尺寸来源=MODE_CUSTOM, 画布宽=1536, 画布高=1536,
             画布比例="自定义", 比例宽=1, 比例高=1, 画布缩放基准="长边", 画布缩放长度=1536,
-            背景图填充方式="锁比例", 宽高取整倍数="16", 画布数据="{}",
+            背景图填充方式="锁比例", 画布宽高取整倍数="16", 画布数据="{}",
             布局提示词输入="",
             背景图1=None, 背景图2=None, 背景图3=None, 背景图4=None,
             背景图5=None, 背景图6=None, 背景图7=None, 背景图8=None):
@@ -707,7 +769,7 @@ class MOSS_YXBOX:
         bg_w = int(first.shape[1]) if first is not None else 0
         bg_h = int(first.shape[0]) if first is not None else 0
 
-        multiple = _multiple(宽高取整倍数)
+        multiple = _multiple(画布宽高取整倍数)
         width, height = _canvas_size(
             画布尺寸来源, 画布宽, 画布高, bg_w, bg_h,
             画布比例, 比例宽, 比例高, 画布缩放基准, 画布缩放长度, multiple,
@@ -737,9 +799,12 @@ class MOSS_YXBOX:
             # 每一项对应一个背景图输入；没有接图的位置是空数组
             ui["background_images"] = saved
 
+        # 草稿 JSON：不编译，保留画布宽高与第一象限（左下角原点）像素坐标
+        draft_prompt = _layout_draft(整体描述, regions, width, height)
+
         return {
             "ui": ui,
-            "result": (layout_prompt, preview, _fractions(regions), elements, width, height),
+            "result": (layout_prompt, preview, _fractions(regions), elements, width, height, draft_prompt),
         }
 
 
