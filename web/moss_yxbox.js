@@ -29,7 +29,7 @@ const HANDLE_CURSOR = {
 const DRAG_THRESHOLD = 3;
 const MIN_BOX = 16;
 const MAX_SIZE = 16384;
-const MAX_BG = 8;
+const MAX_BG = 64;
 
 const HIDDEN_WIDGETS = new Set(["画布数据"]);
 
@@ -44,6 +44,17 @@ const bgSlotIndex = (name) => {
 
 // 每个参数一个锁：锁上以后，画布上和列表里都不能再改
 const FIELDS = ["type", "text", "desc", "w", "h", "color", "x", "y"];
+// 「导入原图」进来的那张图也住在背景图区，但它是独立身份：
+// 不占「背景图N」输入口（伪槽位），不参与 B 编号，尺寸来源里单独有一项。
+const SOURCE_KIND = "source";
+const SOURCE_LABEL = "原图";
+const SOURCE_COLOR = "#c9a6ff";
+const MODE_CUSTOM = "自定义尺寸";
+const MODE_SCALED = "按缩放规则计算";
+const MODE_SOURCE = "按导入原图的原始尺寸";
+const MODE_IMAGE_OLD = "按图片原始尺寸";
+const MODE_BG_RE = /^按背景图(\d+)的原始尺寸$/;
+
 const emptyLocks = (fields = FIELDS) => {
   const out = {};
   for (const key of fields) out[key] = false;
@@ -81,6 +92,8 @@ const CSS = `
 .yx-menu{position:absolute;z-index:40;min-width:172px;padding:5px;background:#1b1d24;border:1px solid #3d4150;
   border-radius:9px;box-shadow:0 14px 34px rgba(0,0,0,.6);font-size:12px;color:#d9dce4;user-select:none;}
 .yx-menu-title{padding:3px 8px 5px;font-size:11px;color:#8d90a0;border-bottom:1px solid #2c2f3a;margin-bottom:4px;}
+.yx-toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);max-width:82%;padding:6px 12px;border-radius:6px;background:#262a36;border:1px solid #3b4154;color:#dfe3ee;font-size:12px;line-height:1.5;z-index:60;pointer-events:none;opacity:0;transition:opacity .16s ease;}
+.yx-toast.yx-toast-on{opacity:1;}
 .yx-menu-item{padding:6px 9px;border-radius:6px;cursor:pointer;white-space:nowrap;}
 .yx-menu-item:hover{background:#282b36;}
 .yx-menu-danger{color:#ff8d8d;}
@@ -88,6 +101,7 @@ const CSS = `
 .yx-menu-sep{height:1px;background:#2c2f3a;margin:5px 2px;}
 .yx-menu-label{padding:4px 8px 2px;font-size:11px;color:#8d90a0;}
 .yx-menu-colors{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:2px 7px 5px;}
+.yx-ic-swap::before{-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5.2h8.2'/%3E%3Cpath d='M9.9 3.1 12.2 5.2l-2.3 2.1'/%3E%3Cpath d='M12 10.8H3.8'/%3E%3Cpath d='M6.1 8.7 3.8 10.8l2.3 2.1'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5.2h8.2'/%3E%3Cpath d='M9.9 3.1 12.2 5.2l-2.3 2.1'/%3E%3Cpath d='M12 10.8H3.8'/%3E%3Cpath d='M6.1 8.7 3.8 10.8l2.3 2.1'/%3E%3C/svg%3E");}
 .yx-menu-swatch{width:18px;height:18px;border-radius:5px;border:1px solid rgba(255,255,255,.25);cursor:pointer;padding:0;}
 .yx-menu-swatch:hover{transform:scale(1.08);}
 .yx-menu-type{appearance:none;background:#20222b;color:#d9dce4;border:1px solid #3a3d4a;border-radius:6px;
@@ -177,7 +191,13 @@ const CSS = `
 .yx-edit{position:absolute;margin:0;padding:2px 4px;resize:none;outline:none;z-index:5;
   background:rgba(10,11,15,.86);color:#fff;border:2px solid #3f78ff;border-radius:2px;overflow:hidden;
   font-family:inherit;line-height:1.25;box-sizing:border-box;}
-.yx-scroll{overflow:auto;box-sizing:border-box;flex:0 0 auto;max-height:none;cursor:default;overscroll-behavior:contain;}
+.yx-scroll{overflow:auto;box-sizing:border-box;flex:0 0 auto;max-height:none;cursor:default;overscroll-behavior:contain;
+  padding-bottom:10px;scrollbar-width:thin;}
+.yx-scroll::-webkit-scrollbar{width:10px;height:10px;}
+.yx-scroll::-webkit-scrollbar-track{background:transparent;}
+.yx-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:5px;}
+.yx-scroll::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.34);}
+.yx-scroll::-webkit-scrollbar-corner{background:transparent;}
 .yx-scroll:focus{outline:none;}
 /* 「显示行数」输入框：钉在操作按钮那一行的最右侧，只统计带编号的行 */
 .yx-rows-field{display:flex;align-items:center;gap:4px;margin-left:auto;padding:0 2px;user-select:none;}
@@ -205,6 +225,15 @@ const CSS = `
 .yx-scroll-box{border-radius:5px;}
 .yx-group-note{font-size:11px;opacity:.72;white-space:nowrap;}
 .yx-row.yx-header span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+/* 表头里的「反选」按钮：贴在「选中」列左边（那一带在表头里本来就空着），
+   做成小按钮的样子——有边框、有底、悬停变蓝——一眼能和旁边的小标题文字区分开 */
+.yx-head-btn{position:absolute;left:5px;top:50%;transform:translateY(-50%);
+  height:16px;padding:0 5px;font-size:10px;line-height:14px;font-family:inherit;
+  border:1px solid #3a3f52;border-radius:4px;background:#1d2030;color:#b6bacb;
+  cursor:pointer;z-index:4;white-space:nowrap;}
+.yx-head-btn:hover{background:#262b3f;border-color:#4d6cff;color:#e8ecff;}
+.yx-head-btn:active{background:#2f3757;}
+.yx-head-btn:focus-visible{outline:1px solid #4d6cff;}
 .yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;transition:background .12s,border-color .12s;}
 .yx-item:hover{background:#23252f;border-color:#343848;}
 .yx-item.yx-sel{border-color:#3f78ff;background:#1f2330;}
@@ -213,6 +242,9 @@ const CSS = `
 .yx-item.yx-bg{background:#201d16;border-color:#38301f;}
 .yx-item.yx-bg.yx-sel{border-color:#ffb454;background:#2a2418;}
 .yx-item.yx-bg.yx-canvas-row{box-shadow:inset 0 0 0 1px #ffb454;}
+.yx-item.yx-item-src{background:#1d1a24;border-color:#43385c;}
+.yx-item.yx-item-src.yx-sel{border-color:#c9a6ff;background:#25202f;}
+.yx-num-src{color:#c9a6ff;}
 .yx-chip.yx-danger{color:#ff6b6b;border-color:#ff6b6b;}
 .yx-num{font-size:11px;color:#8d90a0;text-align:center;cursor:pointer;user-select:none;}
 .yx-item.yx-sel .yx-num{color:#8fb4ff;}
@@ -254,6 +286,14 @@ const CSS = `
 .yx-chip.yx-act{background:#16233a;border-color:#2f5f9e;color:#a9c4f2;}
 .yx-chip.yx-act:hover{background:#1b2c48;border-color:#3f78ff;color:#e2ecff;}
 .yx-chip.yx-act.yx-on{background:#22355a;border-color:#4d8fe8;color:#eaf2ff;}
+/* 三组按钮各用一种颜色：布局提示词＝蓝、原图＝绿、预设＝琥珀 */
+.yx-chip.yx-act-layout{background:#16233a;border-color:#2f5f9e;color:#a9c4f2;}
+.yx-chip.yx-act-layout:hover{background:#1b2c48;border-color:#3f78ff;color:#e2ecff;}
+.yx-chip.yx-act-image{background:#142c20;border-color:#2f7a4e;color:#a4dcb6;}
+.yx-chip.yx-act-image:hover{background:#183826;border-color:#3fa168;color:#dcf7e5;}
+.yx-chip.yx-act-preset{background:#2f240f;border-color:#87652a;color:#f0d8a6;}
+.yx-chip.yx-act-preset:hover{background:#3b2e13;border-color:#b3873c;color:#ffedcd;}
+.yx-chip.yx-act-image:disabled{background:#191c1a;border-color:#2c3a31;color:#7d8e83;opacity:.75;cursor:not-allowed;}
 .yx-chip.yx-tool{color:#b9bcc7;}
 .yx-chip.yx-tool.yx-on{background:#243049;border-color:#3d5c8a;color:#dbe7ff;}
 .yx-chip.yx-soft-danger{color:#c0c2cb;}
@@ -408,7 +448,7 @@ function fillMissingNos(list) {
   let next = 1;
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i];
-    if (Number(item.__no) > 0) continue;
+    if (Number(item.__no) > 0 || item.kind === SOURCE_KIND) continue;
     while (used.has(next)) next += 1;
     item.__no = next;
     used.add(next);
@@ -431,12 +471,34 @@ function setup(node) {
     modal: null,
     // 描述框高度：由你拖右下角手柄决定，读不到就按 64 起
     proseH: clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200),
+    // 前置 / 后置提示词：JSON 区间之外的文字，跟着「画布数据」一起存
+    prefix: "",
+    suffix: "",
+    prefixH: clamp(Math.round(Number(node.properties?.yxPrefixH) || 48), 40, 1200),
+    suffixH: clamp(Math.round(Number(node.properties?.yxSuffixH) || 48), 40, 1200),
     // 两个分区各自的显示行数：只数自己下面带编号的行，默认各 20
     // （旧版存在 yxShowRows 里的那个统一值已经不用了）
     bgShowRows: readRows(node.properties?.yxBgRows),
     boxShowRows: readRows(node.properties?.yxBoxRows),
     // 画布区显示高度：0 = 自动（老算法），>0 = 用这个固定值
-    stageH: clamp(Math.round(Number(node.properties?.yxStageH) || 0), 0, 2600),
+    // v1.0.4 起默认 600：没存过这个值（老工作流 / 新节点）也按 600 显示，存了 0 才是「要自动」
+    stageH: clamp(Math.round(Number(node.properties?.yxStageH ?? 600) || 0), 0, 2600),
+    // 「导入原图」接口上次导入过的图地址，用来避免每帧重复导入
+    imageImportSource: "",
+    imageImportOk: false,
+    imageStamp: "",
+    imageStampUrl: "",
+    imageStampAt: 0,
+    imageBytes: 0,
+    imageImportAgain: false,
+    imageImportSeq: 0,
+    imageImportBusy: false,
+    // 这次导入的原图里有几份排版可挑（「切换排版」按钮用）
+    pngCandidates: [],
+    pngImageUrl: "",
+    // 坐标体系：canvas = 左下角原点、y 向上（老规矩）；draft = 左上角原点、y 向下（和官方草稿 JSON 一致）
+    // 只影响「坐标轴怎么画」和「列表里 y 怎么显示/怎么填」，导出与导入识别一律按官方草稿
+    coordMode: String(node.properties?.yxCoordMode || "canvas") === "draft" ? "draft" : "canvas",
   });
 
   // ---------------------------------------------------------------- widgets
@@ -455,12 +517,81 @@ function setup(node) {
   // 参数改名后旧工作流 / 未重启的后端里还叫旧名，两个名字都认
   const wMult = widget("画布宽高取整倍数") || widget("宽高取整倍数");
 
+  // 参数「显示名」只写 widget.label：界面文字变了，真名不动 ——
+  // 工作流存档、API 格式、PNG 信息、预设、连线都不受影响。
+  const WIDGET_LABELS = {
+    "画布宽": "画布宽（画布尺寸来源选自定义尺寸时生效）",
+    "画布高": "画布高（画布尺寸来源选自定义尺寸时生效）",
+    "画布比例": "画布比例（画布尺寸来源选按缩放规则计算时生效）",
+    "比例宽": "比例宽（选按缩放规则计算且画布比例＝自定义时生效）",
+    "比例高": "比例高（选按缩放规则计算且画布比例＝自定义时生效）",
+    "画布缩放基准": "画布缩放基准（画布尺寸来源选按缩放规则计算时生效）",
+    "画布缩放长度": "画布缩放长度（画布尺寸来源选按缩放规则计算时生效）",
+    "画布宽高取整倍数": "画布宽高取整倍数（决定画布取整倍数，以及宽高/缩放长度输入框的吸附步长）",
+    "宽高取整倍数": "画布宽高取整倍数（决定画布取整倍数，以及宽高/缩放长度输入框的吸附步长）",
+  };
+  Object.keys(WIDGET_LABELS).forEach((name) => {
+    const w = widget(name);
+    if (w) w.label = WIDGET_LABELS[name];
+  });
+
   // 背景图填充方式 = 锁比例 时，拖动/手改尺寸都要求背景图保持原图长宽比
   const ratioLockEnabled = (item) => !!item?.isBg && String(wFit?.value ?? "") === "锁比例";
   const bgRatio = (item) => {
     const w0 = Number(item?.natW) || Number(item?.image?.naturalWidth) || 1;
     const h0 = Number(item?.natH) || Number(item?.image?.naturalHeight) || 1;
     return w0 > 0 && h0 > 0 ? w0 / h0 : 1;
+  };
+
+  // ------------------------------------------------------- 坐标体系（左下原点 / 左上原点）
+  // 内部存的一直是「左上角原点、y 向下」的画布坐标（和导出、编译一致），
+  // 这里只是在显示和输入时做一次换算，两种体系看的是同一份数据。
+  const coordIsDraft = () => state.coordMode === "draft";
+  const yShown = (item) => {
+    const h = Math.max(0, Number(item?.h) || 0);
+    return Math.round(coordIsDraft() ? Number(item?.y) || 0 : S.height - ((Number(item?.y) || 0) + h));
+  };
+  const yFromShown = (item, value) => {
+    const h = Math.max(1, Number(item?.h) || 1);
+    const v = clamp(Number(value) || 0, 0, Math.max(0, S.height - h));
+    return coordIsDraft() ? v : S.height - v - h;
+  };
+  const coordXTips = () => (coordIsDraft()
+    ? "框左上角在画布里的 x 坐标（左上角为原点，向右为正）"
+    : "框左下角在画布里的 x 坐标（左下角为原点，向右为正）");
+  const coordYTips = () => (coordIsDraft()
+    ? "框左上角在画布里的 y 坐标（左上角为原点，向下为正，和导入导出的草稿 JSON 一致）"
+    : "框左下角在画布里的 y 坐标（左下角为原点，向上为正）");
+  const coordBgXTips = () => (coordIsDraft()
+    ? "背景图左上角在画布里的 x 坐标（左上角为原点，向右为正）"
+    : "背景图左下角在画布里的 x 坐标（左下角为原点，向右为正）");
+  const coordBgYTips = () => (coordIsDraft()
+    ? "背景图左上角在画布里的 y 坐标（左上角为原点，向下为正，和导入导出的草稿 JSON 一致）"
+    : "背景图左下角在画布里的 y 坐标（左下角为原点，向上为正）");
+  let draftCoordBtn = null;
+  let axesBtnRef = null;
+  const syncCoordButtons = () => {
+    const draft = coordIsDraft();
+    if (axesBtnRef) {
+      axesBtnRef.classList.toggle("yx-on", state.axes !== false && !draft);
+      axesBtnRef.title = draft
+        ? "坐标轴显示（现在是草稿 JSON 坐标，左下角原点这一套暂时不显示；点「草稿坐标」切回来）"
+        : "显示 / 隐藏 左下角原点的坐标系刻度";
+    }
+    if (draftCoordBtn) {
+      draftCoordBtn.classList.toggle("yx-on", state.axes !== false && draft);
+      draftCoordBtn.title = "草稿 JSON 坐标：左上角为原点、y 向下，和官方草稿 JSON 一致。"
+        + "\n打开它会把「坐标」那一套自动关掉（两套刻度不能同时画）。"
+        + "\n只影响画布上的坐标轴和列表里 y 的显示/输入，导出草稿 JSON、导入识别都不受影响。";
+    }
+  };
+  const setCoordMode = (mode) => {
+    state.coordMode = mode === "draft" ? "draft" : "canvas";
+    node.properties = node.properties || {};
+    node.properties.yxCoordMode = state.coordMode;
+    syncCoordButtons();
+    refreshRows();
+    paint();
   };
 
   for (const item of node.widgets || []) {
@@ -638,6 +769,12 @@ function setup(node) {
   const applyProseHeight = () => applyProseBoxHeight();
   const syncProseAuto = () => false;
   void proseTextHeight;
+  // 三个描述框加起来占的高度：整体描述 + 前置 + 后置（各带一行小标题）
+  function proseTotalHeight() {
+    const side = clamp(Math.round(state.prefixH || 48), 40, 1200)
+      + clamp(Math.round(state.suffixH || 48), 40, 1200);
+    return proseHeight() + side + 2 * (16 + 4) + 2 * 6;
+  }
 
   const S = {
     width: clampSize(wWidth?.value ?? 1536),
@@ -776,23 +913,173 @@ function setup(node) {
   }
   applyProseBoxHeight();
 
-  // 节点最上方：布局提示词的导入 / 导出
+  // ------------------------------------------------ 前置 / 后置提示词
+  // 布局提示词 = 「前置文字 + 布局 JSON + 后置文字」。这两段不参与布局，
+  // 所以单独放输入框，存在「画布数据」里（老工作流没有这两个字段，读出来就是空）。
+  const SIDE_MIN_H = 40;
+  const makeSideBox = (labelText, placeholder) => {
+    const box = el("div", "yx-prose");
+    box.appendChild(el("div", "yx-prose-label", labelText));
+    const area = el("textarea", "yx-prose-area");
+    area.placeholder = placeholder;
+    area.spellcheck = false;
+    box.appendChild(area);
+    for (const type of ["pointerdown", "mousedown", "wheel", "keydown"]) {
+      area.addEventListener(type, (event) => event.stopPropagation());
+    }
+    return { box, area };
+  };
+  const prefixSide = makeSideBox(
+    "前置提示词（JSON 之外，放在最终提示词最前面）",
+    "风格 / 画质 / 光照等写在布局 JSON 外面的文字；只有纯 JSON 时留空",
+  );
+  const suffixSide = makeSideBox(
+    "后置提示词（JSON 之外，放在最终提示词最后面）",
+    "要跟在布局 JSON 后面的文字；只有纯 JSON 时留空",
+  );
+  const prefixArea = prefixSide.area;
+  const suffixArea = suffixSide.area;
+  root.insertBefore(prefixSide.box, proseBox);
+  root.insertBefore(suffixSide.box, proseBox.nextSibling);
+
+  const applySideHeights = () => {
+    const set = (area, value) => {
+      const px = `${clamp(Math.round(value || 48), SIDE_MIN_H, 1200)}px`;
+      if (area.style.height !== px) area.style.height = px;
+    };
+    set(prefixArea, state.prefixH);
+    set(suffixArea, state.suffixH);
+  };
+  const syncSideValues = () => {
+    const p = String(state.prefix || "");
+    const s = String(state.suffix || "");
+    if (prefixArea.value !== p) prefixArea.value = p;
+    if (suffixArea.value !== s) suffixArea.value = s;
+  };
+  // 导入时整组替换（解析出来的前置/后置一起换），避免出现「新 JSON + 旧前后缀」的假组合
+  const setSideProse = (nextPrefix, nextSuffix) => {
+    let changed = false;
+    if (nextPrefix != null && String(nextPrefix) !== String(state.prefix || "")) {
+      state.prefix = String(nextPrefix);
+      changed = true;
+    }
+    if (nextSuffix != null && String(nextSuffix) !== String(state.suffix || "")) {
+      state.suffix = String(nextSuffix);
+      changed = true;
+    }
+    if (changed) syncSideValues();
+    return changed;
+  };
+  let sideCommitTimer = null;
+  const scheduleSideCommit = () => {
+    try { clearTimeout(sideCommitTimer); } catch (_error) { /* 忽略 */ }
+    sideCommitTimer = setTimeout(() => {
+      sideCommitTimer = null;
+      commit();
+    }, 400);
+  };
+  prefixArea.addEventListener("input", () => {
+    state.prefix = prefixArea.value;
+    scheduleSideCommit();
+  });
+  suffixArea.addEventListener("input", () => {
+    state.suffix = suffixArea.value;
+    scheduleSideCommit();
+  });
+  // 拖右下角手柄调高度：只量 offsetHeight（getBoundingClientRect 会带上画布缩放倍率）
+  let sidePointerDown = false;
+  prefixArea.addEventListener("pointerdown", () => { sidePointerDown = true; });
+  suffixArea.addEventListener("pointerdown", () => { sidePointerDown = true; });
+  const syncSideHeights = () => {
+    if (!sidePointerDown) return;
+    sidePointerDown = false;
+    let changed = false;
+    for (const item of [
+      { area: prefixArea, key: "prefixH", prop: "yxPrefixH" },
+      { area: suffixArea, key: "suffixH", prop: "yxSuffixH" },
+    ]) {
+      let measured = 0;
+      try {
+        measured = Math.round(item.area.offsetHeight || 0);
+      } catch (_error) {
+        measured = 0;
+      }
+      if (!measured || measured < 24) continue;
+      if (Math.abs(measured - (state[item.key] || 0)) < 1) continue;
+      state[item.key] = measured;
+      node.properties = node.properties || {};
+      node.properties[item.prop] = measured;
+      changed = true;
+    }
+    if (!changed) return;
+    layout();
+    try {
+      const needed = Math.round(nativeTop() + domDesiredHeight() + 12);
+      if (needed > (node.size?.[1] || 0) + 1 && typeof node.setSize === "function") {
+        node.setSize([Math.round(node.size?.[0] || 980), needed]);
+      }
+    } catch (_error) {
+      // 忽略
+    }
+    node.graph?.setDirtyCanvas?.(true, true);
+  };
+  try {
+    window.addEventListener("pointerup", syncSideHeights, true);
+    window.addEventListener("pointercancel", syncSideHeights, true);
+  } catch (_error) {
+    // 忽略
+  }
+  applySideHeights();
+
+  // 节点最上方：三组按钮，每组一种颜色（布局提示词 = 蓝、原图 = 绿、预设 = 琥珀）
   const topBar = el("div", "yx-topbar");
-  const exportBtn = el("button", "yx-chip yx-act yx-ic yx-ic-export", "导出布局提示词");
+  const exportBtn = el("button", "yx-chip yx-act yx-act-layout yx-ic yx-ic-export", "导出布局提示词");
   exportBtn.type = "button";
   exportBtn.title = "显示节点最终输出的布局提示词（与后端编译结果一致），可一键复制";
   exportBtn.addEventListener("click", () => openExport());
-  const importBtn = el("button", "yx-chip yx-act yx-ic yx-ic-import", "导入布局提示词");
+  const importBtn = el("button", "yx-chip yx-act yx-act-layout yx-ic yx-ic-import", "导入布局提示词");
   importBtn.type = "button";
   importBtn.title = "粘贴草稿 JSON、编译后的 JSON 或纯描述，自动还原画布尺寸、框、文字与颜色";
   importBtn.addEventListener("click", () => openImport());
   topBar.appendChild(exportBtn);
   topBar.appendChild(importBtn);
-  const savePresetBtn = el("button", "yx-chip yx-act yx-ic yx-ic-save", "保存预设");
+  // 「导入原图」：从一张 PNG 的文件信息里找回生成它用的布局提示词，并把这张图当背景图放进来
+  const pngBtn = el("button", "yx-chip yx-act yx-act-image yx-ic yx-ic-import", "导入原图");
+  pngBtn.type = "button";
+  pngBtn.title = "选一张 PNG 原图：从它的文件信息里找回「生成这张图用的布局提示词」（框、类型、编号、文字、描述、整体描述），同时把这张图按原图尺寸铺成背景图1、画布尺寸来源自动切到「按图片原始尺寸」。\n"
+    + "不管这张图是哪个节点、哪个工作流生成的，只要工作流里某个节点的文本参数带着带 bbox 的布局 JSON，就能导入；只有接在出图链路上的那份会被优先采用。\n"
+    + "如果生成这张图用的是自然语言提示词（没有 bbox），会把那段提示词放进「整体描述」，不生成框。\n"
+    + "图片被压缩/转存工具抹掉文件信息时读不到。";
+  pngBtn.addEventListener("click", () => startPngImport());
+  topBar.appendChild(pngBtn);
+  // 「切换排版」：这张图里有多份排版时，直接换一份重新导入，不用再选文件
+  const switchBtn = el("button", "yx-chip yx-act yx-act-image yx-ic yx-ic-swap", "切换排版");
+  switchBtn.type = "button";
+  switchBtn.title = "当导入的这张原图里有多份排版、而刚才选的那份不对时，点这里直接换一份（会再弹一次排版列表），不用重新选文件。\n"
+    + "对左上角「导入原图」输入口接进来的图同样有效：那张图有多份排版时，这个键也可以直接切换。\n"
+    + "图里只有一份排版（或没有布局 JSON）时，这个键是灰的。";
+  switchBtn.disabled = true;
+  switchBtn.addEventListener("click", () => {
+    if (!state.pngCandidates.length) {
+      showToast("这张图里没有多份排版可选");
+      return;
+    }
+    openPngChooser(state.pngCandidates, switchBtn, state.pngImageUrl);
+  });
+  topBar.appendChild(switchBtn);
+  // 只有「这次导入的图确实有多份排版」时才让切换键可用
+  const syncLayoutSwitch = () => {
+    const usable = state.pngCandidates.length > 1;
+    switchBtn.disabled = !usable;
+    switchBtn.title = usable
+      ? `这张图里有 ${state.pngCandidates.length} 份排版，点这里换一份（不用重新选文件）`
+      : "这张图里没有多份排版可选（图里只有一份排版，或没有布局 JSON）";
+  };
+  const savePresetBtn = el("button", "yx-chip yx-act yx-act-preset yx-ic yx-ic-save", "保存预设");
   savePresetBtn.type = "button";
   savePresetBtn.title = "把当前节点的全部参数、画布上的框和背景图信息保存成一个预设，下次一键还原";
   savePresetBtn.addEventListener("click", () => openSavePreset());
-  const managePresetBtn = el("button", "yx-chip yx-act yx-ic yx-ic-folder", "管理预设");
+  const managePresetBtn = el("button", "yx-chip yx-act yx-act-preset yx-ic yx-ic-folder", "管理预设");
   managePresetBtn.type = "button";
   managePresetBtn.title = "查看、整理（文件夹）、改名、排序、搜索、加载或删除已保存的预设";
   managePresetBtn.addEventListener("click", () => openPresetManager());
@@ -840,11 +1127,32 @@ function setup(node) {
   const axesBtn = el("button", "yx-chip yx-tool yx-on yx-ic yx-ic-axes", "坐标");
   axesBtn.type = "button";
   axesBtn.title = "显示 / 隐藏 左下角原点的坐标系刻度";
+  axesBtnRef = axesBtn;
   axesBtn.addEventListener("click", () => {
+    // 现在画的是草稿 JSON 那一套：点「坐标」就切回左下角原点
+    if (coordIsDraft()) {
+      state.axes = true;
+      setCoordMode("canvas");
+      return;
+    }
     state.axes = state.axes === false;
-    axesBtn.classList.toggle("yx-on", state.axes !== false);
+    syncCoordButtons();
     paint();
   });
+  // 草稿 JSON 坐标：左上角原点、y 向下。和「坐标」互斥，同一时刻只画一套刻度
+  draftCoordBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-axes", "草稿坐标");
+  draftCoordBtn.type = "button";
+  draftCoordBtn.addEventListener("click", () => {
+    if (!coordIsDraft()) {
+      state.axes = true;
+      setCoordMode("draft");
+      return;
+    }
+    state.axes = state.axes === false;
+    syncCoordButtons();
+    paint();
+  });
+  syncCoordButtons();
   const multiBtn = el("button", "yx-chip yx-tool yx-ic yx-ic-layers", "多选");
   multiBtn.type = "button";
   multiBtn.title = "打开后，画布与列表里才可以同时选中多个框；关闭时点一下只会选中一个框";
@@ -888,6 +1196,23 @@ function setup(node) {
     hDivBtn.classList.toggle("yx-on", state.hDivOn);
     paint();
   });
+  // 对角线：两条一起显示，颜色单独可调（默认和等分线一样）
+  const diagBtn = el("button", "yx-chip", "对角线");
+  diagBtn.type = "button";
+  diagBtn.title = "打开后画两条对角线（左上→右下、右上→左下），用来对齐构图的对角线节奏；颜色用右边的色块调";
+  const diagColor = el("input", "yx-color-in");
+  diagColor.type = "color";
+  diagColor.value = "#ff8a8a";
+  diagColor.title = "对角线的颜色（默认和等分线一样是淡红色）";
+  diagColor.addEventListener("input", () => {
+    state.diagColor = diagColor.value;
+    paint();
+  });
+  diagBtn.addEventListener("click", () => {
+    state.diagOn = !state.diagOn;
+    diagBtn.classList.toggle("yx-on", state.diagOn);
+    paint();
+  });
   const vDivBtn = el("button", "yx-chip", "竖等分");
   vDivBtn.type = "button";
   vDivBtn.title = "打开后按右侧数字画竖向等分线（线的条数＝等分数-1）";
@@ -922,6 +1247,9 @@ function setup(node) {
   // 网格往后的一串工具换到第二行（toolsRow），最右边仍是「画布区高度」
   toolsRow.appendChild(gridBtn);
   toolsRow.appendChild(axesBtn);
+  toolsRow.appendChild(draftCoordBtn);
+  toolsRow.appendChild(diagBtn);
+  toolsRow.appendChild(diagColor);
   toolsRow.appendChild(hDivBtn);
   toolsRow.appendChild(hDivNum);
   toolsRow.appendChild(hDivColor);
@@ -944,6 +1272,7 @@ function setup(node) {
   stageHField.appendChild(stageHInput);
   toolsRow.appendChild(stageHField);
   state.stageHInput = stageHInput;
+  stageHInput.value = state.stageH ? String(state.stageH) : "";
   stageHInput.addEventListener("input", () => {
     stageHInput.value = String(stageHInput.value || "").replace(/[^0-9]/g, "").slice(0, 4);
   });
@@ -1021,7 +1350,7 @@ function setup(node) {
   // 列：移动 整体锁 | 选中 编号 | 锁 类型 | 锁 备注 | 锁 宽 | 锁 高 | 锁 压暗 | 锁 x | 锁 y | 显示 重置 画布 删除
   // 背景图区没有「文字」这一列，所以两套列宽表不同（见 CSS 的 .yx-row / .yx-row.yx-box-grid）
   const LABELS = ["", "", "选中", "编号", "", "类型", "", "备注", "", "宽", "", "高", "",
-    "压暗%", "", "x", "", "y", "显示", "重置", "画布", "删除"];
+    "压暗%", "", "x", "", "y", "显示", "重置", "作画布", "删除"];
   // 绘框区少「重置 / 画布」两列，其余与背景图区一致（每个字段前面那一格就是它的锁）
   const BOX_LABELS = ["", "", "选中", "编号", "", "类型", "", "文字", "", "描述", "", "宽", "",
     "高", "", "颜色", "", "x", "", "y", "显示", "删除"];
@@ -1070,6 +1399,39 @@ function setup(node) {
     bgHeadCells.push(span);
   }
   appendCells(bgHead, bgHeadCells, BG_SEP, true);
+
+  // 表头里的「反选」：背景图区、绘框区各一个，只反选自己那一区的对象。
+  // 它是个真按钮（能点、有悬停反馈），所以用按钮样式跟旁边的表头文字区分开。
+  function makeHeadInvert(which) {
+    const btn = el("button", "yx-head-btn", "反选");
+    btn.type = "button";
+    btn.title = which === "bg"
+      ? "反选背景图：选中的取消、没选中的全部选中（只作用于背景图区，不动绘制框）"
+      : "反选绘制框：选中的取消、没选中的全部选中（只作用于绘框区，不动背景图）";
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const items = which === "bg" ? S.bgs.filter(Boolean) : S.boxes.slice();
+      if (!items.length) return;
+      for (const item of items) {
+        if (S.selected.has(item)) S.selected.delete(item);
+        else S.selected.add(item);
+      }
+      if (S.selected.size > 1 && !state.multi) {
+        state.multi = true;
+        multiBtn.classList.add("yx-on");
+      }
+      syncBarButtons();
+      refreshRows();
+      paint();
+    });
+    return btn;
+  }
+  const bgInvertBtn = makeHeadInvert("bg");
+  const boxInvertBtn = makeHeadInvert("box");
+  bgHead.appendChild(bgInvertBtn);
+  tableHead.appendChild(boxInvertBtn);
+
   const rows = el("div", "yx-table yx-rows");
   boxScroll.appendChild(tableHead);
   boxScroll.appendChild(rows);
@@ -1205,7 +1567,7 @@ function setup(node) {
     const fallback = Math.max(1, S.boxes.indexOf(box) + 1);
     return `框${String(no > 0 ? no : fallback).padStart(2, "0")}`;
   };
-  const bgLabel = (bg) => `背景图B${Number(bg?.__no) || (Number(bg?.slot) || 0) + 1}`;
+  const bgLabel = (bg) => (isSourceBg(bg) ? SOURCE_LABEL : `背景图B${Number(bg?.__no) || (Number(bg?.slot) || 0) + 1}`);
   const itemLabel = (item) => (item && item.isBg ? bgLabel(item) : boxLabel(item));
   const clipboardLabel = () => (clipboardItem ? clipboardItem.label : "");
 
@@ -1215,6 +1577,8 @@ function setup(node) {
     // 多选时只复制排在最上面的那个（和画面层级一致）
     const src = items[0];
     if (src.isBg) {
+      // 原图那一行绑定的是「导入原图」接口的图，复制出来没有来源，直接不复制
+      if (isSourceBg(src)) return false;
       if (src.lockedCanvas) return false;
       clipboardItem = {
         kind: "bg",
@@ -1319,6 +1683,12 @@ function setup(node) {
     if (!boxes.length && !bgs.length) return false;
     S.boxes = S.boxes.filter((box) => !boxes.includes(box));
     for (const bg of bgs) {
+      // 原图那一行没有输入口，直接撤掉
+      if (isSourceBg(bg)) {
+        S.bgs = S.bgs.filter((item) => item !== bg);
+        S.rows.delete(bg);
+        continue;
+      }
       // 同一个输入口可能被复制出好几份：只有最后一份也删掉时才断线
       const stillUsed = S.bgs.some((item) => item !== bg && item.slot === bg.slot);
       const slot = stillUsed ? null : (node.inputs || []).find((s) => bgSlotIndex(s.name) === bg.slot);
@@ -1494,7 +1864,7 @@ function setup(node) {
   // ---------------------------------------------------------------- 底部状态栏
   // 只做只读信息展示：版本号 / 框与背景数量 / 画布尺寸 / 缩放 / 网格。
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
-  const STATUS_VERSION = "1.0.3";
+  const STATUS_VERSION = "1.0.4";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
@@ -1541,6 +1911,7 @@ function setup(node) {
   const closeMenu = () => {
     menu.style.display = "none";
     menu.textContent = "";
+    state.menuSticky = false;
   };
 
   const menuItem = (label, handler, options = {}) => {
@@ -1686,6 +2057,40 @@ function setup(node) {
       }
       menu.appendChild(types);
     }
+    if (bgs.length) {
+      menu.appendChild(el("div", "yx-menu-sep", ""));
+      menu.appendChild(el("div", "yx-menu-label", "背景图"));
+      menuItem("填满画布（等比撑满，超出的裁掉）", () => {
+        let changed = false;
+        for (const bg of selectedBgs()) {
+          if (fillBgIntoCanvas(bg)) changed = true;
+        }
+        if (changed) {
+          syncRows();
+          layout();
+          commit();
+          paint();
+        }
+        closeMenu();
+      });
+      menuItem("按原比例放进画布（左下角对齐）", () => {
+        let changed = false;
+        for (const bg of selectedBgs()) {
+          if (!bg.natW || !bg.natH) continue;
+          bg.lockedCanvas = false;
+          bg.hidden = false;
+          placeInitial(bg);
+          changed = true;
+        }
+        if (changed) {
+          syncRows();
+          layout();
+          commit();
+          paint();
+        }
+        closeMenu();
+      });
+    }
   };
 
   canvas.addEventListener("contextmenu", (event) => {
@@ -1720,6 +2125,8 @@ function setup(node) {
   document.addEventListener("pointerdown", (event) => {
     if (menu.style.display === "none") return;
     if (event.target && menu.contains && menu.contains(event.target)) return;
+    // 「选排版」的弹窗是粘住的：点到别的节点里也不关，几个节点可以同时弹着各选各的
+    if (state.menuSticky && !(state.root && state.root.contains(event.target))) return;
     closeMenu();
   }, true);
 
@@ -1774,6 +2181,8 @@ function setup(node) {
   state.hDivOn = false;
   state.hDiv = 3;
   state.hDivColor = "#ff8a8a";
+  state.diagOn = false;
+  state.diagColor = "#ff8a8a";
   state.vDivOn = false;
   state.vDiv = 3;
   state.vDivColor = "#ff8a8a";
@@ -1926,7 +2335,8 @@ function setup(node) {
   };
   const normalizeCanvasWidget = (w, minValue = 16) => normalizeCanvasValue(w, minValue);
 
-  const activeBg = () => S.bgs.find((bg) => bg && bg.image) || null;
+  // 「第一张背景图」只算真正的背景图，原图那一行不算（它有自己的尺寸来源开关）
+  const activeBg = () => S.bgs.find((bg) => bg && bg.image && !isSourceBg(bg)) || null;
 
   const aspectRatio = () => {
     const aspect = String(wAspect?.value ?? "保持原图");
@@ -1984,6 +2394,13 @@ function setup(node) {
   // ---------------------------------------------------------------- state io
   const serialize = () => {
     const payload = {
+      // 画布宽高：后端出图/预览/提示词一律按这个尺寸算，
+      // 这样「画布上看到的几乘几」就是生成图的几乘几，不管尺寸是从哪里来的。
+      width: Math.round(S.width),
+      height: Math.round(S.height),
+      // 布局 JSON 之外的前后提示词（空字符串表示没有）
+      prefix: String(state.prefix || ""),
+      suffix: String(state.suffix || ""),
       boxes: S.boxes.map((box) => ({
         no: Number(box.__no) || 0,
         type: box.type,
@@ -1999,6 +2416,7 @@ function setup(node) {
       })),
       bgs: S.bgs.filter(Boolean).map((bg) => ({
         no: Number(bg.__no) || 0,
+        kind: bg.kind === SOURCE_KIND ? SOURCE_KIND : "bg",
         slot: bg.slot,
         x: Math.round(bg.x),
         y: Math.round(bg.y),
@@ -2105,6 +2523,11 @@ function setup(node) {
     try {
       S.width = clampSize(snap.width);
       S.height = clampSize(snap.height);
+      // 撤销 / 重做也要把前置、后置提示词一起回到那一步（它们同样存在画布数据里）
+      setSideProse(
+        typeof payload.prefix === "string" ? payload.prefix : "",
+        typeof payload.suffix === "string" ? payload.suffix : "",
+      );
       S.boxes = (payload.boxes || []).map((box) => ({
         type: box.type,
         x: Number(box.x) || 0,
@@ -2116,12 +2539,14 @@ function setup(node) {
         palette: [...(box.palette || [])],
         hidden: !!box.hidden,
         lock: { ...(box.lock || {}) },
+        __no: Number(box.no) || 0,
       }));
       S.bgs = (payload.bgs || []).map((bg) => {
         const old = prevBgs.find((item) => item.slot === bg.slot) ||
           prevBgs.find((item) => bg.url && item.url === bg.url);
         return {
           isBg: true,
+          kind: bg.kind === SOURCE_KIND ? SOURCE_KIND : "bg",
           slot: bg.slot,
           x: Number(bg.x) || 0,
           y: Number(bg.y) || 0,
@@ -2132,6 +2557,9 @@ function setup(node) {
           url: bg.url || "",
           lockedCanvas: !!bg.lockedCanvas,
           lock: { ...(bg.lock || {}) },
+          dim: clamp(Number(bg.dim) || 45, 1, 100),
+          lockAll: !!bg.lockAll,
+          __no: Number(bg.no) || 0,
           image: old?.image || null,
           natW: old?.natW,
           natH: old?.natH,
@@ -2150,9 +2578,10 @@ function setup(node) {
     lastSnap = captureSnapshot();
     // 快照里只存 URL，图片本体从上游重新挂一次
     for (const bg of S.bgs) {
-      if (bg.image || !bg.url) continue;
+      if (!bg || bg.kind === SOURCE_KIND) continue;
+      if (bg.image || !bg.url || !(Number(bg.slot) >= 0)) continue;
       try {
-        state.attachBackgroundByURL?.(bg, bg.url);
+        state.attachBackgroundByURL?.(Number(bg.slot), bg.url);
       } catch {
         /* 忽略 */
       }
@@ -2199,6 +2628,10 @@ function setup(node) {
   };
 
   const syncSizeWidgets = () => {
+    // 画布宽 / 画布高 只在「自定义尺寸」模式下才等于画布实际尺寸；
+    // 按图片原始尺寸 / 按缩放规则 时，这两个数字是用户自己的设定值，
+    // 换图时不能跟着图片变（否则显示和实际就打架了）。
+    if (String(wMode?.value ?? "自定义尺寸") !== "自定义尺寸") return;
     state.suppress = true;
     try {
       if (wWidth) wWidth.value = S.width;
@@ -2210,8 +2643,10 @@ function setup(node) {
 
   const refreshInfo = () => {
     canvasInfo.innerHTML = `画布 <b>${Math.round(S.width)}×${Math.round(S.height)}</b>`;
-    const count = S.bgs.filter(Boolean).length;
-    bgInfo.innerHTML = `背景图 <b>${count}</b> 张`;
+    const rows = S.bgs.filter(Boolean);
+    const count = rows.filter((bg) => bg.kind !== SOURCE_KIND).length;
+    const hasSource = rows.some((bg) => bg.kind === SOURCE_KIND);
+    bgInfo.innerHTML = `背景图 <b>${count}</b> 张${hasSource ? "（另有原图）" : ""}`;
   };
 
   const applyCanvasSize = (width, height, rescale) => {
@@ -2245,6 +2680,9 @@ function setup(node) {
     }
     S.width = w;
     S.height = h;
+    // 立刻把新尺寸写进「画布数据」，别等下一次编辑：
+    // 用户可能改完尺寸直接点运行，队列表里拿的是控件当前值。
+    if (wData) wData.value = serialize();
     syncSizeWidgets();
     refreshInfo();
     refreshRows();
@@ -2253,21 +2691,29 @@ function setup(node) {
   };
 
   // 画布尺寸模式：只决定画布大小，不重新摆放背景图
-  const applyModeSize = () => {
-    const mode = String(wMode?.value ?? "自定义尺寸");
-    if (mode === "自定义尺寸") {
+  const applyModeSize = (rescale = true) => {
+    const mode = String(wMode?.value ?? MODE_CUSTOM);
+    if (mode === MODE_CUSTOM) {
       applyCanvasSize(numeric(wWidth, S.width), numeric(wHeight, S.height), true);
       return;
     }
+    const picked = modeBgNat(mode);
+    if (picked) {
+      // 按原图尺寸：这一档不取整，画布精确等于原图像素（导出尺寸必须和原图一致）
+      if (picked.exact) {
+        applyCanvasSize(Math.round(picked.natW), Math.round(picked.natH), rescale);
+      } else {
+        const mult = multiple();
+        applyCanvasSize(roundNear(picked.natW, mult), roundNear(picked.natH, mult), rescale);
+      }
+      return;
+    }
+    // 按缩放规则：拿列表最上面那张已接上的背景图作为基准
     const bg = activeBg();
     if (!bg || !bg.natW || !bg.natH) return;
     const mult = multiple();
-    if (mode === "按图片原始尺寸") {
-      applyCanvasSize(roundNear(bg.natW, mult), roundNear(bg.natH, mult), true);
-    } else {
-      const [w, h] = scaledSize(bg.natW, bg.natH);
-      applyCanvasSize(roundUp(w, mult), roundUp(h, mult), true);
-    }
+    const [w, h] = scaledSize(bg.natW, bg.natH);
+    applyCanvasSize(roundUp(w, mult), roundUp(h, mult), rescale);
   };
 
   // ---------------------------------------------------------------- clamping
@@ -2492,7 +2938,9 @@ function setup(node) {
       wInput.value = Math.round(box.w);
       hInput.value = Math.round(box.h);
       xInput.value = Math.round(box.x);
-      yInput.value = Math.round(S.height - (box.y + box.h));
+      xInput.title = coordXTips();
+      yInput.value = yShown(box);
+      yInput.title = coordYTips();
       if (document.activeElement !== text) text.value = box.text || "";
       if (document.activeElement !== desc) desc.value = box.desc || "";
       if (document.activeElement !== expandText) expandText.value = box.text || "";
@@ -2584,10 +3032,11 @@ function setup(node) {
       syncRow();
       edit();
     });
+    // 坐标按当前体系换算：左下原点（y 向上）或草稿 JSON（左上原点、y 向下），内部一律存左上原点的画布坐标
     yInput.addEventListener("change", () => {
       if (locked("y")) return;
       const value = Number(yInput.value);
-      if (Number.isFinite(value)) box.y = S.height - value - box.h;
+      if (Number.isFinite(value)) box.y = yFromShown(box, value);
       clampBox(box);
       syncRow();
       edit();
@@ -2642,20 +3091,25 @@ function setup(node) {
     const row = el("div", "yx-table yx-item-wrap");
     row.__item = bg;
     row.__isBg = true;
+    // 这一行是不是「导入原图」进来的原图（原图有独立身份：伪槽位、不占 B 编号）
+    const source = isSourceBg(bg);
     row.style.display = "flex";
     row.style.flexDirection = "column";
-    const line = el("div", "yx-row yx-item yx-bg");
+    const line = el("div", source ? "yx-row yx-item yx-bg yx-item-src" : "yx-row yx-item yx-bg");
 
     const drag = el("div", "yx-drag", "☰");
-    drag.title = "拖动排序：背景图之间的前后关系（永远在所有绘制框下面）";
+    drag.title = source
+      ? "拖动排序：原图在列表里的位置（列表越靠上越上层；原图默认排在最后＝最底层）"
+      : "拖动排序：背景图之间的前后关系（永远在所有绘制框下面）";
     const check = el("input", "yx-check");
     check.type = "checkbox";
-    const num = el("div", "yx-num", "B1");
+    const num = el("div", source ? "yx-num yx-num-src" : "yx-num", "B1");
+    if (source) num.title = "这张是「导入原图」进来的原图：不占背景图编号，也不占背景图输入口";
 
     const lockType = el("div", null, "");
-    const type = el("div", null, "背景图");
+    const type = el("div", null, source ? "原图" : "背景图");
     type.style.fontSize = "12px";
-    type.style.color = BG_COLOR;
+    type.style.color = source ? SOURCE_COLOR : BG_COLOR;
 
     const lockDesc = lockButton(bg, "desc", "备注");
     // 选中带：勾选框 → 备注之前，这一段的空白处点一下也能选中这张背景图
@@ -2703,10 +3157,14 @@ function setup(node) {
     reset.style.padding = "0 2px";
     reset.style.fontSize = "10px";
     reset.style.lineHeight = "16px";
-    reset.title = "按图片原始尺寸放回画布左下角（超出画布的部分会显示在画布外并被裁掉）";
+    reset.title = source
+      ? "按原图像素尺寸放回画布左下角（超出画布的部分会显示在画布外并被裁掉）"
+      : "按图片原始尺寸放回画布左下角（超出画布的部分会显示在画布外并被裁掉）";
     const del = el("button", "yx-icon", "✕");
     del.type = "button";
-    del.title = "移除这张背景图";
+    del.title = source
+      ? "删掉这一行，同时把这张原图从画布上撤掉（框和其它参数都不动）"
+      : "移除这张背景图";
 
     // 直接作为画布（二次确认）＋ 整体锁
     const canvasBtn = el("button", "yx-chip", "作画布");
@@ -2714,7 +3172,9 @@ function setup(node) {
     canvasBtn.style.padding = "0 2px";
     canvasBtn.style.fontSize = "10px";
     canvasBtn.style.lineHeight = "16px";
-    canvasBtn.title = "直接作为画布：画布尺寸＝这张图的原始尺寸，图片铺满画布并整体锁定（点右侧「锁」列解锁）";
+    canvasBtn.title = source
+      ? "直接作为画布：画布尺寸＝这张原图的原始尺寸（不取整），图片铺满画布并整体锁定"
+      : "直接作为画布：画布尺寸＝这张图的原始尺寸，图片铺满画布并整体锁定（点右侧「锁」列解锁）";
     const lockAll = el("button", "yx-icon yx-lock-all", "🔓");
     lockAll.type = "button";
 
@@ -2778,7 +3238,9 @@ function setup(node) {
       wInput.value = Math.round(bg.w);
       hInput.value = Math.round(bg.h);
       xInput.value = Math.round(bg.x);
-      yInput.value = Math.round(S.height - (bg.y + bg.h));
+      xInput.title = coordBgXTips();
+      yInput.value = yShown(bg);
+      yInput.title = coordBgYTips();
       if (document.activeElement !== dimInput) dimInput.value = String(Math.round(Number(bg.dim) || 45));
       lockAll.textContent = bg.lockAll ? "🔒" : "🔓";
       lockAll.title = bg.lockAll
@@ -2847,7 +3309,7 @@ function setup(node) {
     yInput.addEventListener("change", () => {
       if (locked("y")) return;
       const value = Number(yInput.value);
-      if (Number.isFinite(value)) bg.y = S.height - value - bg.h;
+      if (Number.isFinite(value)) bg.y = yFromShown(bg, value);
       clampBg(bg);
       syncRow();
       edit();
@@ -2916,6 +3378,10 @@ function setup(node) {
       }
       state.confirm = null;
       clearTimeout(state.confirmTimer);
+      if (isSourceBg(bg)) {
+        dropSourceBg();
+        return;
+      }
       S.selected.delete(bg);
       S.rows.delete(bg);
       S.bgs = S.bgs.filter((item) => item !== bg);
@@ -3029,6 +3495,8 @@ function setup(node) {
   }
 
   function refreshRows() {
+    // 背景图 / 原图有没有变动，决定「画布尺寸来源」下拉里有哪些选项
+    syncSizeModeOptions();
     // 任何时候画列表，都先确认每个对象都有编号：一旦编上就跟着对象走，永不改号
     fillMissingNos(S.boxes);
     fillMissingNos(S.bgs);
@@ -3041,21 +3509,47 @@ function setup(node) {
         if (!item || !alive.has(item)) S.selected.delete(item);
       }
     }
-    rows.textContent = "";
-    bgRows.textContent = "";
-    S.rows.clear();
     const bgs = S.bgs.filter(Boolean);
     bgs.forEach((bg) => {
-      // 编号用对象自己的号（新加的往后排），不再跟着列表顺序走
-      bg.label = `B${Number(bg.__no) || 0}`;
+      // 编号用对象自己的号（新加的往后排），不再跟着列表顺序走；原图那行不编号
+      bg.label = isSourceBg(bg) ? SOURCE_LABEL : `B${Number(bg.__no) || 0}`;
     });
     // 两个分区各自一行标题：背景图区在上、绘框区在下，颜色也不同
     // （标题行里除了文字还有本区的「显示行数」，所以只改文字，不重建整行）
-    bgTitleNote.textContent = bgs.length ? `${bgs.length} 张 · 不写进提示词` : "暂未接入背景图";
+    const realBgCount = bgs.filter((bg) => bg.kind !== SOURCE_KIND).length;
+    bgTitleNote.textContent = realBgCount
+      ? `${realBgCount} 张 · 不写进提示词`
+      : (bgs.length ? "只有「原图」一行 · 不写进提示词" : "暂未接入背景图");
     boxTitleNote.textContent = S.boxes.length ? `${S.boxes.length} 个框` : "还没有画框";
     // 没有背景图时整块收起，不白占高度
     const showBg = bgs.length > 0;
     for (const item of [bgTitle, bgScroll]) item.style.display = showBg ? "" : "none";
+    // 行集合和顺序都没变（只是选中/数值/编号变了）时，不重建 DOM，只同步现有行的值。
+    // 每行里有下拉框 + 多个输入框，重建一次的开销远大于同步，框一多差别很明显。
+    const sameRows = (container, list) => {
+      if (container.children.length !== list.length) return false;
+      for (let i = 0; i < list.length; i += 1) {
+        const row = S.rows.get(list[i]);
+        if (!row || container.children[i] !== row) return false;
+      }
+      return true;
+    };
+    const emptyPlaceholder = () => rows.children.length === 1
+      && rows.children[0]?.classList?.contains("yx-empty");
+    const sameBoxRows = S.boxes.length === 0
+      ? (emptyPlaceholder() || rows.children.length === 0)
+      : sameRows(rows, S.boxes);
+    if (sameBoxRows && sameRows(bgRows, bgs)) {
+      // 直接同步，不调 syncRows()：后者声明在下面，初始化早期还没赋值（TDZ）
+      for (const row of S.rows.values()) row.__sync?.();
+      refreshInfo();
+      state.syncBar?.();
+      paint();
+      return;
+    }
+    rows.textContent = "";
+    bgRows.textContent = "";
+    S.rows.clear();
     if (S.boxes.length === 0 && bgs.length === 0) {
       rows.appendChild(el("div", "yx-empty", "在画布空白处按住拖动即可画框；接入图片后会自动出现在背景图区"));
     }
@@ -3086,6 +3580,9 @@ function setup(node) {
   const layoutWidth = () => Math.max(240, stage.clientWidth || 480);
 
   const LIST_GAP = 3; // 列表里的行间距（.yx-table 的 gap）
+  // 两个分区底部留出来的横向滚动条带：节点压窄时内容会溢出，横滚条会盖住最后一行，
+  // 所以面板高度里固定把这 10px 算进去（CSS 里 .yx-scroll 的 padding-bottom 同值）。
+  const PANEL_SCROLL_PAD = 10;
   const LIST_DEFAULT_ROWS = 20; // 默认显示行数（只数带编号的行）
   const LIST_ROW_LIMIT = 999; // 「显示行数」输入框允许的最大值
   // 行高不写死：行里有 26px 的下拉框，一行其实是 34px 左右，写死 32px 就会少露两行。
@@ -3149,7 +3646,8 @@ function setup(node) {
     if (count <= 0) return Math.round(headH);
     const visible = Math.min(count, Math.max(0, Math.round(show)));
     if (visible <= 0) return Math.round(headH);
-    return Math.round(headH + LIST_GAP + rowsHeight(visible, rowH));
+    // 末尾那 10px 是横滚条的位置：不加的话横滚条会把最后一行压掉一截
+    return Math.round(headH + LIST_GAP + rowsHeight(visible, rowH) + PANEL_SCROLL_PAD);
   };
 
   // 列表总高度 = 背景图区标题 + 背景图区面板 + 绘框区标题 + 绘框区面板
@@ -3166,9 +3664,9 @@ function setup(node) {
   const listNeeded = () => {
     const parts = [];
     if (bgRowCount() > 0) {
-      parts.push(groupHeight(bgTitle), headHeight(bgHead) + LIST_GAP + rowsHeight(bgRowCount(), bgRowHeight()));
+      parts.push(groupHeight(bgTitle), headHeight(bgHead) + LIST_GAP + rowsHeight(bgRowCount(), bgRowHeight()) + PANEL_SCROLL_PAD);
     }
-    parts.push(groupHeight(boxTitle), headHeight(tableHead) + LIST_GAP + rowsHeight(boxRowCount(), boxRowHeight()));
+    parts.push(groupHeight(boxTitle), headHeight(tableHead) + LIST_GAP + rowsHeight(boxRowCount(), boxRowHeight()) + PANEL_SCROLL_PAD);
     const sum = parts.reduce((total, value) => total + value, 0);
     return Math.round(8 + sum + (parts.length - 1) * LIST_GAP);
   };
@@ -3195,7 +3693,7 @@ function setup(node) {
   const domWidgetTop = () => Math.round(nativeTop());
 
   // 画布区以外被固定占用的高度：列表 + 顶部按钮行/工具条 + 描述框 + 内边距与留白
-  const stageReservedHeight = () => Math.round(listBaseline() + chromeHeight() + proseHeight() + 38 + 12);
+  const stageReservedHeight = () => Math.round(listBaseline() + chromeHeight() + proseTotalHeight() + 38 + 12);
 
   // 整块 DOM 界面需要的高度 = 顶部按钮行 + 工具条 + 画布 + 列表（全部是定值，杜绝互相拉扯）
   // chrome 只量顶部两条小按钮行（它们的高度只由文字决定，跟画布/列表无关，量了也不会回路）
@@ -3215,7 +3713,7 @@ function setup(node) {
   // 注意用「理想高度」而不是 stageHeight()：这个值要写进 --comfy-widget-min-height，
   // 一旦把「拉长节点多出来的画布高度」也算进来，节点就再也缩不回去了。
   // +38 = 上下内边距 + 状态栏下面留出的空白（旧渲染会裁掉最底部十几个像素）
-  const baseTotalHeight = () => Math.round(stageBaseHeight() + listBaseline() + chromeHeight() + proseHeight() + 38);
+  const baseTotalHeight = () => Math.round(stageBaseHeight() + listBaseline() + chromeHeight() + proseTotalHeight() + 38);
 
   // 节点能缩到的最小高度（与 baseTotalHeight 一致）
   const minTotalHeight = () => baseTotalHeight();
@@ -3227,7 +3725,7 @@ function setup(node) {
   const listHeight = () => Math.round(listBaseline());
 
   // 整块 DOM 界面的实际高度（列表按当前显示上限算，画布按理想高度 + 拉长多出来的空间）
-  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseHeight() + 38);
+  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseTotalHeight() + 38);
 
   // ComfyUI 两套前端（经典画布 / Nodes 2.0）都读这个高度：
   // 2.0 走 computeLayoutSize / --comfy-widget-min-height，经典画布走 computeSize 与元素自身高度
@@ -3256,8 +3754,8 @@ function setup(node) {
     state.stageH = value;
     input.value = value ? String(value) : "";
     node.properties = node.properties || {};
-    if (value) node.properties.yxStageH = value;
-    else delete node.properties.yxStageH;
+    // 0 也要存下来：存过 0 才是「明确要自动」，没存过按默认 600
+    node.properties.yxStageH = value;
     layout();
     try {
       const need = Math.round(neededNodeHeight());
@@ -3407,6 +3905,50 @@ function setup(node) {
     paint();
   };
 
+  // 节点被拉宽 / 压窄时，画布盒子跟着变，但 canvas 的背板尺寸只在 paint() 里才更新。
+  // 不重绘就会出现「旧位图被 CSS 100% 拉伸铺满新盒子」——看起来就是画布比例变了、
+  // 背景图被横向拉宽。这里在盒子尺寸真的变化时补一次布局+重绘（同一帧内合并）。
+  const relayoutSoon = () => {
+    if (state.relayoutPending) return;
+    state.relayoutPending = true;
+    const run = () => {
+      state.relayoutPending = false;
+      try {
+        layout();
+      } catch (_error) {
+        // 忽略
+      }
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    else setTimeout(run, 16);
+  };
+  if (typeof ResizeObserver === "function") {
+    try {
+      state.stageObserver = new ResizeObserver(() => {
+        const width = Math.round(stage.clientWidth);
+        const height = Math.round(stage.offsetHeight);
+        const last = state.lastStageBox;
+        if (last && last[0] === width && last[1] === height) return;
+        state.lastStageBox = [width, height];
+        relayoutSoon();
+      });
+      state.stageObserver.observe(stage);
+    } catch (_error) {
+      // 极老浏览器没有 ResizeObserver，靠下面的 node.onResize 兜底
+    }
+  }
+  const originalNodeOnResize = node.onResize;
+  node.onResize = function (...args) {
+    if (typeof originalNodeOnResize === "function") {
+      try {
+        originalNodeOnResize.apply(this, args);
+      } catch (_error) {
+        // 忽略
+      }
+    }
+    relayoutSoon();
+  };
+
   // ---------------------------------------------------------------- drawing
   function paint() {
     if (!ctx) return;
@@ -3457,7 +3999,8 @@ function setup(node) {
       const bg = bgs[i];
       if (!bg.image || bg.hidden) continue;
       const no = Number(bg.__no) || (Number(bg.slot) || 0) + 1;
-      drawTag(ctx, `B${no}`, left + bg.x * g.scale, top + bg.y * g.scale, itemColor(bg));
+      const tag = isSourceBg(bg) ? SOURCE_LABEL : `B${no}`;
+      drawTag(ctx, tag, left + bg.x * g.scale, top + bg.y * g.scale, itemColor(bg));
     }
     ctx.restore();
 
@@ -3468,6 +4011,7 @@ function setup(node) {
 
     if (state.axes !== false) drawThirds(ctx, g, left, top, cw, chh);
     if (state.hDivOn) drawDivisors(ctx, "h", state.hDiv, left, top, cw, chh, state.hDivColor);
+    if (state.diagOn) drawDiagonals(ctx, left, top, cw, chh, state.diagColor);
     if (state.vDivOn) drawDivisors(ctx, "v", state.vDiv, left, top, cw, chh, state.vDivColor);
     if (state.grid !== false) drawGrid(ctx, g, left, top, cw, chh);
     if (state.axes !== false) drawAxes(ctx, g, left, top, cw, chh);
@@ -3660,6 +4204,23 @@ function setup(node) {
     c.restore();
   }
 
+  function drawDiagonals(c, left, top, cw, chh, color) {
+    c.save();
+    c.beginPath();
+    c.rect(left, top, cw, chh);
+    c.clip();
+    c.strokeStyle = color || "#ff8a8a";
+    c.lineWidth = 1;
+    c.setLineDash([]);
+    c.beginPath();
+    c.moveTo(left + 0.5, top + 0.5);
+    c.lineTo(left + cw - 0.5, top + chh - 0.5);
+    c.moveTo(left + cw - 0.5, top + 0.5);
+    c.lineTo(left + 0.5, top + chh - 0.5);
+    c.stroke();
+    c.restore();
+  }
+
   function niceStep(total) {
     const steps = [16, 32, 64, 128, 256, 512, 1024, 2048];
     const g = geo();
@@ -3680,6 +4241,41 @@ function setup(node) {
     c.fillStyle = "rgba(150,200,255,0.85)";
     c.lineWidth = 1;
     c.font = "10px ui-monospace, monospace";
+    if (coordIsDraft()) {
+      // 草稿 JSON 坐标：左上角为原点，x 向右、y 向下（和导入/导出的草稿 JSON 完全一致）
+      // 横轴在上边、纵轴在左边：分成两条独立的线画。
+      // 千万别连成一条折线——那样会从底边左端斜拉到顶边右端，多出一条对角线。
+      c.beginPath();
+      c.moveTo(left + 0.5, top + 0.5);
+      c.lineTo(left + cw, top + 0.5);
+      c.stroke();
+      c.beginPath();
+      c.moveTo(left + 0.5, top + 0.5);
+      c.lineTo(left + 0.5, top + chh - 0.5);
+      c.stroke();
+      c.textAlign = "center";
+      c.textBaseline = "top";
+      for (let x = 0; x <= S.width; x += step) {
+        const px = left + x * g.scale;
+        c.beginPath();
+        c.moveTo(Math.round(px) + 0.5, top + 1);
+        c.lineTo(Math.round(px) + 0.5, top + 5);
+        c.stroke();
+        c.fillText(String(x), clamp(px, left + 12, left + cw - 12), top + 6);
+      }
+      c.textAlign = "left";
+      c.textBaseline = "middle";
+      for (let y = 0; y <= S.height; y += step) {
+        const py = top + y * g.scale;
+        c.beginPath();
+        c.moveTo(left + 1, Math.round(py) + 0.5);
+        c.lineTo(left + 5, Math.round(py) + 0.5);
+        c.stroke();
+        if (y !== 0) c.fillText(String(y), left + 6, clamp(py, top + 8, top + chh - 8));
+      }
+      c.restore();
+      return;
+    }
     c.textBaseline = "bottom";
     c.beginPath();
     c.moveTo(left + 0.5, top);
@@ -3739,7 +4335,8 @@ function setup(node) {
 
     // 框内文字 / 描述：字号跟着框在屏幕上的大小走，缩放节点时不会挤成一团
     const lines = [];
-    if (box.type === TYPE_TEXT && box.text) lines.push(box.text);
+    // 文字里的换行也当成多行排，不然画布上会多出一个「空小方块」（换行符的占位字形）
+    if (box.type === TYPE_TEXT && box.text) lines.push(...String(box.text).split("\n"));
     if (box.desc) lines.push(box.desc);
     if (lines.length) {
       const fontSize = Math.round(clamp(Math.min(w, h) * 0.32, 9, 14));
@@ -4474,15 +5071,108 @@ function setup(node) {
       const id = Number(link.origin_id);
       return Number.isFinite(id) ? id : null;
     }
-    const graph = node.graph || app.graph;
-    const table = graph?.links || graph?._links;
+    const graphs = [node.graph, app?.graph].filter(Boolean);
     let record = null;
-    if (Array.isArray(table)) record = table[link] ?? null;
-    else if (table && typeof table.get === "function") record = table.get(link) || null;
-    else if (table && typeof table === "object") record = table[link] || null;
-    if (!record) record = graph?.getLink?.(link) || null;
+    for (const graph of graphs) {
+      const table = graph?.links || graph?._links;
+      if (Array.isArray(table)) record = record || table[link] || null;
+      else if (table && typeof table.get === "function") record = record || table.get(link) || null;
+      else if (table && typeof table === "object") record = record || table[link] || null;
+      if (!record) record = graph?.getLink?.(link) || null;
+      if (record) break;
+    }
     const id = Number(record?.origin_id);
     return Number.isFinite(id) ? id : null;
+  };
+
+  // ------------------------------------------------- 外部接入的画布尺寸
+  // 「画布宽 / 画布高 / 画布缩放长度」一旦被转成输入接了上游，ComfyUI 只把上游的值送进后端，
+  // 前端控件里留的还是接上那一刻的旧值 —— 表现就是「手动输入、点箭头都能实时变，接了线画布就不动了」。
+  // 这里每帧（限流）去上游节点读它当前的参数，等价于「把上游的值当成你自己填的值」。
+  const LINK_WIDTH_NAMES = ["画布宽", "宽", "宽度", "w", "width", "分辨率宽", "宽(px)", "宽 px", "宽px", "canvas_width"];
+  const LINK_HEIGHT_NAMES = ["画布高", "高", "高度", "h", "height", "分辨率高", "高(px)", "高 px", "高px", "canvas_height"];
+  const LINK_LENGTH_NAMES = ["画布缩放长度", "缩放长度", "长度", "长", "长边", "基准长度", "size", "length", "总长"];
+  const inputSlot = (name) => (node.inputs || []).find((item) => String(item?.name || "") === name) || null;
+  const widgetInt = (w) => {
+    const raw = w?.value;
+    if (raw == null || typeof raw === "boolean") return null;
+    if (typeof raw === "string" && !raw.trim()) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  // 「预设分辨率」这类节点（例如 ZML_PresetResolution）或者顺手接个文本框时，参数就是一串文字，
+  // 宽高并不单独占参数 —— 这里把字符串里的两个数字解出来，兼容常见写法：
+  // 2048x1024 / 2048×1024 / 2048*1024 / 2048:1024 / 2048,1024 / 2048 1024
+  const parseSizeText = (text) => {
+    const raw = String(text || "");
+    const patterns = [
+      /(\d{2,5})\s*[x×*]\s*(\d{2,5})/i,
+      /(\d{2,5})\s*[:：]\s*(\d{2,5})/,
+      /(\d{2,5})\s*[,，/|]\s*(\d{2,5})/,
+      /(\d{2,5})\s+(\d{2,5})/,
+    ];
+    for (const pattern of patterns) {
+      const match = raw.match(pattern);
+      if (!match) continue;
+      const first = Number(match[1]);
+      const second = Number(match[2]);
+      if (first > 0 && second > 0) return [first, second];
+    }
+    return null;
+  };
+  // position：上游没有能识别的参数名时，按「宽在前、高在后」的顺序兜底
+  // （大多数「预设分辨率」节点就是这么摆的）
+  const linkedInt = (slot, names, position) => {
+    if (!slot || slot.link == null) return null;
+    const originId = linkOriginId(slot);
+    if (originId == null) return null;
+    const origin = (node.graph || app.graph)?.getNodeById?.(originId);
+    if (!origin || origin === node) return null;
+    const widgets = (origin.widgets || []).filter(Boolean);
+    // 1) 参数名直接对得上（宽 / 宽度 / 高 / 高度 / 长度 …）
+    for (const w of widgets) {
+      const name = String(w.name || "").trim().toLowerCase();
+      if (!names.includes(name)) continue;
+      const value = widgetInt(w);
+      if (value != null) return value;
+    }
+    // 2) 「2048x1024」这种分辨率字符串：宽高取对应的一半，长度取长边
+    for (const w of widgets) {
+      if (typeof w.value !== "string") continue;
+      const size = parseSizeText(w.value);
+      if (!size) continue;
+      const swapped = widgets.some((item) => /互换|交换|swap/i.test(String(item?.name || "")) && !!item.value);
+      const pair = swapped ? [size[1], size[0]] : size;
+      if (position === 0) return pair[0];
+      if (position === 1) return pair[1];
+      return Math.max(pair[0], pair[1]);
+    }
+    // 3) 顺序兜底：只有一 / 两个数字参数时按先后取（布尔开关不算数字参数）
+    const values = widgets.map(widgetInt).filter((value) => value != null);
+    if (position != null && values.length === 2) return values[position];
+    if (values.length === 1) return values[0];
+    return null;
+  };
+  // 返回 true 表示画布确实被改了（控件值、画布尺寸都算）
+  const syncLinkedCanvas = () => {
+    const width = linkedInt(inputSlot("画布宽"), LINK_WIDTH_NAMES, 0);
+    const height = linkedInt(inputSlot("画布高"), LINK_HEIGHT_NAMES, 1);
+    const length = linkedInt(inputSlot("画布缩放长度"), LINK_LENGTH_NAMES, null);
+    if (width == null && height == null && length == null) return false;
+    const mode = String(wMode?.value ?? "自定义尺寸");
+    if (mode === "自定义尺寸") {
+      const nextW = width == null ? S.width : clampSize(width);
+      const nextH = height == null ? S.height : clampSize(height);
+      if (nextW === S.width && nextH === S.height) return false;
+      applyCanvasSize(nextW, nextH, true);
+      return true;
+    }
+    if (length == null) return false;
+    const nextLength = Math.round(clamp(length, 4, MAX_SIZE));
+    if (Math.round(Number(wLength?.value)) === nextLength) return false;
+    if (wLength) wLength.value = nextLength;
+    applyModeSize();
+    return true;
   };
 
   const upstreamImageURL = (slotIndex) => {
@@ -4551,6 +5241,7 @@ function setup(node) {
         lockAll: false,
         lock: emptyLocks(["w", "h", "x", "y", "desc", "dim"]),
         isBg: true,
+        kind: "bg",
         label: "",
       };
       bg.__no = nextLabelNo(S.bgs);
@@ -4560,6 +5251,155 @@ function setup(node) {
     }
     return bg;
   };
+
+  // ---------------------------------------------------------------- 原图
+  // 用 function 声明（会提升），这样初始化早期的 refreshRows 也能安全调用。
+  function sourceBg() {
+    return S.bgs.find((bg) => bg && bg.kind === SOURCE_KIND) || null;
+  }
+
+  function isSourceBg(item) {
+    return !!item && item.kind === SOURCE_KIND;
+  }
+
+  function ensureSourceBg(atTop = false) {
+    let bg = sourceBg();
+    if (bg) return bg;
+    bg = {
+      slot: -1,
+      kind: SOURCE_KIND,
+      image: null,
+      natW: 0,
+      natH: 0,
+      x: 0, y: 0,
+      w: S.width, h: S.height,
+      hidden: false,
+      desc: "",
+      dim: 45,
+      lockAll: false,
+      lock: emptyLocks(["w", "h", "x", "y", "desc", "dim"]),
+      isBg: true,
+      label: SOURCE_LABEL,
+      __no: 0,
+    };
+    // 默认放在列表最下面：它是底图，别的背景图应该盖在它上面
+    if (atTop) S.bgs.unshift(bg);
+    else S.bgs.push(bg);
+    return bg;
+  }
+
+  // 原图那一行的删除：撤掉这一行、把图从画布上拿掉，框和其它参数都不动
+  function dropSourceBg() {
+    const bg = sourceBg();
+    if (!bg) return false;
+    S.selected.delete(bg);
+    S.rows.delete(bg);
+    S.bgs = S.bgs.filter((item) => item !== bg);
+    // 尺寸来源正指着这张原图时，退到「自定义尺寸」（画布本身保持不变）
+    if (wMode && String(wMode.value ?? "") === MODE_SOURCE) {
+      wMode.value = MODE_CUSTOM;
+      syncSizeWidgets();
+    }
+    refreshRows();
+    layout();
+    commit();
+    paint();
+    showToast("已移除原图那一行（画布尺寸保持不变）");
+    return true;
+  }
+
+  // 画布尺寸来源可选项：只列真实存在的来源（原图 / 已接上且拿到尺寸的背景图）
+  function sizeModeOptions() {
+    const list = [MODE_CUSTOM, MODE_SCALED];
+    const source = sourceBg();
+    if (source && Number(source.natW) > 0 && Number(source.natH) > 0) list.push(MODE_SOURCE);
+    const entries = S.bgs
+      .filter((bg) => bg && bg.kind !== SOURCE_KIND && Number(bg.slot) >= 0
+        && Number(bg.natW) > 0 && Number(bg.natH) > 0)
+      .slice()
+      .sort((a, b) => Number(a.slot) - Number(b.slot));
+    for (const bg of entries) list.push(`按背景图${Number(bg.slot) + 1}的原始尺寸`);
+    return list;
+  }
+
+  function syncSizeModeOptions() {
+    if (!wMode) return;
+    const list = sizeModeOptions();
+    const key = list.join("|");
+    if (key === state.sizeModeKey) return;
+    state.sizeModeKey = key;
+    try {
+      if (wMode.options) {
+        wMode.options.values = list;
+        wMode.options.max = Math.max(0, list.length - 1);
+      }
+      const current = String(wMode.value ?? "");
+      if (current && !list.includes(current)) {
+        wMode.value = list[0] || MODE_CUSTOM;
+        // 回落时画布尺寸保持不变，但「画布宽/高」控件必须跟着画布走，
+        // 否则界面显示「自定义尺寸 + 旧数字」，和画布对不上。
+        syncSizeWidgets();
+      }
+    } catch (_error) {
+      // 框架偶尔不允许改 options，忽略（改下一张图时还会再试一次）
+    }
+    try {
+      node.setDirtyCanvas?.(true, true);
+      node.graph?.setDirtyCanvas?.(true, true);
+      app?.canvas?.setDirty?.(true, true);
+    } catch (_error) {
+      // 忽略
+    }
+  }
+
+  // 当前尺寸来源指向的那张图（原图 / 按背景图N）：拿不到就返回 null
+  function modeBgNat(mode) {
+    const text = String(mode || "");
+    if (text === MODE_SOURCE) {
+      const source = sourceBg();
+      if (!source || !Number(source.natW) || !Number(source.natH)) return null;
+      return { bg: source, natW: Number(source.natW), natH: Number(source.natH), exact: true };
+    }
+    const hit = MODE_BG_RE.exec(text);
+    if (!hit) return null;
+    const slot = Number(hit[1]) - 1;
+    const bg = S.bgs.find((item) => item && item.kind !== SOURCE_KIND && Number(item.slot) === slot);
+    if (!bg || !Number(bg.natW) || !Number(bg.natH)) return null;
+    return { bg, natW: Number(bg.natW), natH: Number(bg.natH), exact: false };
+  }
+
+  function setSizeMode(mode) {
+    if (!wMode) return false;
+    syncSizeModeOptions();
+    wMode.value = String(mode || MODE_CUSTOM);
+    applyModeSize(false);
+    refreshInfo();
+    refreshRows();
+    layout();
+    commit();
+    return true;
+  }
+
+  // 老工作流里存的是「按图片原始尺寸」：迁移成「按背景图1的原始尺寸」（没有就退原图档 / 自定义）
+  function normalizeSizeMode() {
+    if (!wMode) return;
+    const current = String(wMode.value ?? "");
+    if (!current) {
+      wMode.value = MODE_CUSTOM;
+      return;
+    }
+    if (current === MODE_IMAGE_OLD) {
+      const firstBg = S.bgs.find((bg) => bg && bg.kind !== SOURCE_KIND && Number(bg.slot) === 0 && Number(bg.natW) > 0);
+      if (firstBg) wMode.value = "按背景图1的原始尺寸";
+      else if (sourceBg()) wMode.value = MODE_SOURCE;
+      else wMode.value = MODE_CUSTOM;
+      return;
+    }
+    const list = sizeModeOptions();
+    if (current !== MODE_SOURCE && !MODE_BG_RE.test(current) && !list.includes(current)) {
+      wMode.value = MODE_CUSTOM;
+    }
+  }
 
   // 第一次接上图片时的初始矩形：保持原图长宽比，缩到刚好填满画布的一条边，
   // 不超出画布，并让左下角对齐画布原点（x=0、左下角 y=0）
@@ -4585,6 +5425,35 @@ function setup(node) {
     bg.y = S.height - h; // 内部坐标以画布顶部为 0，对齐左下角
   };
 
+  // 填满画布（cover）：保持原图长宽比，以画布中心对齐，缩放到刚好盖住画布，
+  // 哪一边超出画布就把超出部分裁掉（画布外不显示）。
+  const fillBgIntoCanvas = (bg) => {
+    const natW = Number(bg?.natW) || 0;
+    const natH = Number(bg?.natH) || 0;
+    if (!natW || !natH) return false;
+    const scale = Math.max(S.width / natW, S.height / natH);
+    if (!bg.lock?.w) bg.w = Math.max(1, Math.round(natW * scale));
+    if (!bg.lock?.h) bg.h = Math.max(1, Math.round(natH * scale));
+    if (!bg.lock?.x) bg.x = Math.round((S.width - bg.w) / 2);
+    if (!bg.lock?.y) bg.y = Math.round((S.height - bg.h) / 2);
+    bg.lockedCanvas = false;
+    bg.hidden = false;
+    clampBg(bg);
+    return true;
+  };
+
+  // 换图之后：按图片原始尺寸 / 按缩放规则 时，画布要立刻跟着这张新图变；
+  // 自定义尺寸时画布不动（那两个数字本来就是用户自己填的值）。
+  // 接图 / 换图只负责把这张图等比放进「当前画布」：画布尺寸只由「画布尺寸来源」决定，
+  // 只有当前来源正好选中这张图时画布才跟着它走（别的图接入不改画布）。
+  const followImageCanvas = (bg, first) => {
+    if (!bg || !bg.natW || !bg.natH) return;
+    const picked = modeBgNat(String(wMode?.value ?? ""));
+    if (picked && picked.bg === bg) applyModeSize(false);
+    placeInitial(bg);
+    refreshInfo();
+  };
+
   const attachBackground = async (slotIndex, force = false) => {
     const url = upstreamImageURL(slotIndex);
     if (!url) return;
@@ -4598,22 +5467,49 @@ function setup(node) {
     bg.natW = image.naturalWidth || image.width || 0;
     bg.natH = image.naturalHeight || image.height || 0;
     if (first) placeInitial(bg);
+    followImageCanvas(bg, first);
     refreshRows();
     layout();
     commit();
   };
 
   const syncBackgrounds = async () => {
-    ensureBgInputs();
-    const slots = new Set();
-    for (const slot of node.inputs || []) {
-      const index = bgSlotIndex(slot.name);
-      if (index >= 0 && slot.link != null) slots.add(index);
+    // 载入工作流时连线会一条一条恢复，原来每恢复一条就整轮重算一遍（ensureBgInputs + 逐张加载图 + 重建列表 + layout + commit），
+    // 节点越多、连的输入越多就越卡，还会互相打断。这里加一把锁 + 末尾补跑一次，保证同一时刻只有一轮在跑。
+    if (state.bgSyncBusy) {
+      state.bgSyncAgain = true;
+      return;
     }
-    for (const index of slots) await attachBackground(index);
-    refreshRows();
-    layout();
-    commit();
+    state.bgSyncBusy = true;
+    state.bgSyncAgain = false;
+    try {
+      ensureBgInputs();
+      const slots = new Set();
+      for (const slot of node.inputs || []) {
+        const index = bgSlotIndex(slot.name);
+        if (index >= 0 && slot.link != null) slots.add(index);
+      }
+      for (const index of slots) await attachBackground(index);
+      refreshRows();
+      layout();
+      commit();
+    } finally {
+      state.bgSyncBusy = false;
+    }
+    if (state.bgSyncAgain) {
+      state.bgSyncAgain = false;
+      return syncBackgrounds();
+    }
+  };
+
+  // 连线变化很密（载入工作流时一次几十个），统一压成一次：80ms 内多次变化只跑最后一轮
+  let syncBgTimer = 0;
+  const scheduleSyncBackgrounds = (delay = 80) => {
+    clearTimeout(syncBgTimer);
+    syncBgTimer = setTimeout(() => {
+      syncBgTimer = 0;
+      syncBackgrounds().catch(() => {});
+    }, delay);
   };
 
   // 上游换图 / 刚连上线时，不执行也能立刻把背景图挂上去：
@@ -4652,9 +5548,9 @@ function setup(node) {
     const natW = Number(bg?.natW) || 0;
     const natH = Number(bg?.natH) || 0;
     if (!natW || !natH) return;
-    const mult = multiple();
-    S.width = clampSize(roundNear(natW, mult) || natW);
-    S.height = clampSize(roundNear(natH, mult) || natH);
+    const mult = isSourceBg(bg) ? 0 : multiple();
+    S.width = clampSize(mult ? (roundNear(natW, mult) || natW) : Math.round(natW));
+    S.height = clampSize(mult ? (roundNear(natH, mult) || natH) : Math.round(natH));
     syncSizeWidgets();
     bg.x = 0;
     bg.y = 0;
@@ -4663,6 +5559,18 @@ function setup(node) {
     bg.lockedCanvas = true;
     bg.hidden = false;
     S.selected.delete(bg);
+    // 把「画布尺寸来源」也切到这张图上：否则下拉显示的还是别的档，
+    // 之后任何“按来源重算”的动作（换图 / 改来源 / 重新导入）都会把画布改回去。
+    syncSizeModeOptions();
+    if (isSourceBg(bg)) {
+      // 原图当画布：切到「按导入原图的原始尺寸」，之后换原图也和它保持一致
+      if (wMode) wMode.value = MODE_SOURCE;
+    } else {
+      const want = `按背景图${Number(bg.slot) + 1}的原始尺寸`;
+      if (wMode) wMode.value = sizeModeOptions().includes(want) ? want : MODE_CUSTOM;
+      // 落到「自定义尺寸」时把算好的画布数字写进控件，界面和画布保持一致
+      syncSizeWidgets();
+    }
     refreshInfo();
     refreshRows();
     layout();
@@ -4671,22 +5579,50 @@ function setup(node) {
 
   // 某个背景图输入口被断开：把这一张从列表里撤掉
   const dropBackground = (slotIndex) => {
-    const bg = S.bgs.find((item) => item && item.slot === slotIndex);
-    if (!bg) return;
-    S.selected.delete(bg);
-    S.rows.delete(bg);
-    S.bgs = S.bgs.filter((item) => item !== bg);
+    // 粘贴出来的副本会沿用同一个 slot（后端拿同一张图画两遍），
+    // 所以断线时要把这个 slot 的行全撤掉：留一条只会显示旧图，后端却拿不到图。
+    const victims = S.bgs.filter((item) => item && item.slot === slotIndex);
+    if (!victims.length) return;
+    for (const bg of victims) {
+      S.selected.delete(bg);
+      S.rows.delete(bg);
+    }
+    S.bgs = S.bgs.filter((item) => !victims.includes(item));
+    // 来源指着这张图时，选项会少一档；顺便把「画布宽/高」控件跟画布对齐
+    syncSizeModeOptions();
     refreshRows();
     layout();
     commit();
+    paint();
   };
 
   // ---------------------------------------------------------------- restore
+  // 打开工作流时几张背景图会同时加载完；原来每张图各自重排 + 重绘一次，图多就是一轮接一轮的强制重排。
+  // 这里把同一批压成一次（60ms 内多次请求只跑最后一遍）。
+  let restoredImgTimer = 0;
+  const scheduleRestoredImageRefresh = () => {
+    clearTimeout(restoredImgTimer);
+    restoredImgTimer = setTimeout(() => {
+      restoredImgTimer = 0;
+      try {
+        refreshRows();
+        layout();
+        paint();
+      } catch (_error) {
+        // 忽略
+      }
+    }, 60);
+  };
   // 把一份 {boxes, bgs} 数据灌进画布（打开工作流 / 载入预设都走这里）
   const restoreCanvas = (data) => {
     S.boxes = [];
     S.bgs = [];
     S.selected.clear();
+    // 前置 / 后置跟着画布数据走（老工作流没有这两个字段 → 清空，不会留上一份的残渣）
+    setSideProse(
+      typeof data?.prefix === "string" ? data.prefix : "",
+      typeof data?.suffix === "string" ? data.suffix : "",
+    );
     if (data && Array.isArray(data.boxes)) {
       for (const item of data.boxes) {
         if (!item || typeof item !== "object") continue;
@@ -4694,7 +5630,7 @@ function setup(node) {
           Number(item.x) || 0, Number(item.y) || 0);
         box.w = Math.max(MIN_BOX, Number(item.w) || MIN_BOX);
         box.h = Math.max(MIN_BOX, Number(item.h) || MIN_BOX);
-        box.text = String(item.text || "");
+        box.text = textValue(item.text);
         box.desc = String(item.desc || "");
         box.palette = Array.isArray(item.palette) ? item.palette.slice(0, 5) : [];
         box.hidden = !!item.hidden;
@@ -4708,9 +5644,10 @@ function setup(node) {
       for (const item of data.bgs) {
         if (!item || typeof item !== "object") continue;
         const slot = Number.isFinite(Number(item.slot)) ? Number(item.slot) : S.bgs.length;
-        // 同一个输入口被复制出多份：后面的那些必须新建一条，不能覆盖第一条
-        const bg = ensureBgEntry(slot, usedSlots.has(slot), false);
-        usedSlots.add(slot);
+        // 原图那一行是独立身份：不占背景图编号，也不占「背景图N」输入口
+        const isSource = item.kind === SOURCE_KIND;
+        const bg = isSource ? ensureSourceBg(false) : ensureBgEntry(slot, usedSlots.has(slot), false);
+        if (!isSource) usedSlots.add(slot);
         bg.x = Number(item.x) || 0;
         bg.y = Number(item.y) || 0;
         bg.w = Math.max(MIN_BOX, Number(item.w) || S.width);
@@ -4718,7 +5655,7 @@ function setup(node) {
         bg.hidden = !!item.hidden;
         bg.desc = String(item.desc || "");
         bg.lockedCanvas = !!item.lockedCanvas;
-        bg.__no = Number(item.no) || 0;
+        if (!isSource) bg.__no = Number(item.no) || 0;
         bg.dim = clamp(Number(item.dim) || 45, 1, 100);
         bg.lockAll = !!item.lockAll;
         for (const field of ["w", "h", "x", "y", "desc", "dim"]) bg.lock[field] = !!item.lock?.[field];
@@ -4731,18 +5668,22 @@ function setup(node) {
             bg.image = image;
             bg.natW = bg.natW || image.naturalWidth || image.width || 0;
             bg.natH = bg.natH || image.naturalHeight || image.height || 0;
-            refreshRows();
-            layout();
-            paint();
+            scheduleRestoredImageRefresh();
           });
         }
       }
     }
-    S.width = clampSize(numeric(wWidth, S.width));
-    S.height = clampSize(numeric(wHeight, S.height));
+    // 画布数据里的宽高才是画布真正的尺寸（后端出图也按它算）：非「自定义尺寸」档时，
+    // 画布宽/高 控件只是用户自己填的参数，不能拿来当画布尺寸，否则重开工作流画布会跳。
+    const storedW = Number(data && data.width);
+    const storedH = Number(data && data.height);
+    S.width = clampSize(storedW > 0 ? storedW : numeric(wWidth, S.width));
+    S.height = clampSize(storedH > 0 ? storedH : numeric(wHeight, S.height));
     // 老工作流没有编号：按列表顺序补 01、02…（新画的接着往后排）
     fillMissingNos(S.boxes);
     fillMissingNos(S.bgs);
+    normalizeSizeMode();
+    syncSizeModeOptions();
     refreshRows();
     layout();
   };
@@ -4763,14 +5704,21 @@ function setup(node) {
       }
     }
     restoreCanvas(data);
+    // 坐标体系跟着工作流走：存过 draft 就按草稿 JSON 显示（老工作流没有这个值 → 维持左下原点）
+    try {
+      state.coordMode = String(node.properties?.yxCoordMode || "canvas") === "draft" ? "draft" : "canvas";
+      syncCoordButtons();
+    } catch (_error) {
+      // 忽略
+    }
     // 恢复两个分区的「显示行数」与描述框高度（都存在 node.properties 里，跨会话生效）
     try {
       state.bgShowRows = readRows(node.properties?.yxBgRows);
       state.boxShowRows = readRows(node.properties?.yxBoxRows);
       if (state.bgRowsInput) state.bgRowsInput.value = String(state.bgShowRows);
       if (state.boxRowsInput) state.boxRowsInput.value = String(state.boxShowRows);
-      // 画布区高度：有存过就回填，没存过就留空（= 自动，和以前一样）
-      state.stageH = clamp(Math.round(Number(node.properties?.yxStageH) || 0), 0, 2600);
+      // 画布区高度：存过就回填；老工作流没存过按默认 600；存了 0 才是「自动」
+      state.stageH = clamp(Math.round(Number(node.properties?.yxStageH ?? 600) || 0), 0, 2600);
       if (state.stageHInput) {
         state.stageHInput.value = state.stageH ? String(state.stageH) : "";
       }
@@ -4817,6 +5765,7 @@ function setup(node) {
     bg.natW = image.naturalWidth || image.width || 0;
     bg.natH = image.naturalHeight || image.height || 0;
     if (first) placeInitial(bg);
+    followImageCanvas(bg, first);
     refreshRows();
     layout();
     commit();
@@ -4829,7 +5778,12 @@ function setup(node) {
       applyOutputs(message);
       if (message?.dims) {
         const [w, h] = message.dims;
-        if (Number.isFinite(w) && Number.isFinite(h) && (w !== S.width || h !== S.height)) {
+        // 只有「自定义尺寸」这档才让后端的尺寸结果改画布。
+        // 其它档（按图片原始尺寸 / 按缩放规则）画布由图片和规则算，
+        // 而后端在没有接背景图时会退回用「画布宽 / 画布高」两个参数算 ——
+        // 一旦照它改，刚「导入原图」进来的画布就会被那两个旧数字顶掉（点一下运行就变）。
+        const custom = String(wMode?.value ?? "自定义尺寸") === "自定义尺寸";
+        if (custom && Number.isFinite(w) && Number.isFinite(h) && (w !== S.width || h !== S.height)) {
           applyCanvasSize(w, h, false);
         }
       }
@@ -4859,6 +5813,7 @@ function setup(node) {
       window.removeEventListener?.("pointerup", state.proseUpHandler, true);
       window.removeEventListener?.("wheel", state.wheelZoomHandler, true);
       if (state.wheelListHandler) document.removeEventListener("wheel", state.wheelListHandler, true);
+      state.stageObserver?.disconnect?.();
     } catch (_error) {
       // 忽略
     }
@@ -4872,7 +5827,31 @@ function setup(node) {
     const isLayoutSlot = String(ioSlot?.name || "") === LAYOUT_INPUT_NAME;
     try {
       if (slotIndex >= 0 && connected === false) dropBackground(slotIndex);
-      syncBackgrounds();
+      // 只有背景图线的增删才需要重新挂背景图；其它参数（画布宽高、布局提示词、导入原图…）的连线变化
+      // 一律跳过。载入工作流时连线是一条条恢复的，原来每恢复一条就整轮重算，切换工作流会卡很久。
+      if (slotIndex >= 0) {
+        scheduleSyncBackgrounds(connected ? 120 : 0);
+      }
+      if (String(ioSlot?.name || "") === "导入原图") {
+        // 接上/断开这张图：立刻按当前那张图导一次，不用等下一帧轮询
+        setTimeout(() => {
+          try {
+            state.bgHintShown = false;
+  state.imageImportSource = "";
+            state.imageImportOk = false;
+            if (connected === false) {
+              state.imageImportSeq = (state.imageImportSeq || 0) + 1;
+              state.pngCandidates = [];
+              state.pngImageUrl = "";
+              syncLayoutSwitch();
+              return;
+            }
+            syncImageImport();
+          } catch (error) {
+            console.error("[MOSS YXBOX] 导入原图接口同步失败", error);
+          }
+        }, 0);
+      }
       if (isLayoutSlot) {
         // 换了一个上游文本框：等这一轮连接结算完，立刻按新接入的内容重来一遍
         setTimeout(() => {
@@ -4887,9 +5866,9 @@ function setup(node) {
         }, 0);
       }
       // 有些上游节点要过一会儿才把图挂出来，补两次重试
-      if (connected) {
-        setTimeout(() => { syncBackgrounds().catch(() => {}); }, 400);
-        setTimeout(() => { syncBackgrounds().catch(() => {}); }, 1500);
+      if (connected && slotIndex >= 0) {
+        setTimeout(() => { scheduleSyncBackgrounds(200); }, 400);
+        setTimeout(() => { scheduleSyncBackgrounds(200); }, 1500);
       }
     } catch (error) {
       console.error("[MOSS YXBOX] 同步背景图失败", error);
@@ -4953,6 +5932,8 @@ function setup(node) {
   let lastAppliedProse = -1;
   // 节点高度变化 → 列表显示上限变化 → 防抖重排（拖节点时不想每帧都重排）
   let lastListCap = -1;
+  // 外部接入的画布尺寸：限流同步用（每 120ms 最多读一次上游）
+  let lastLinkedSyncAt = 0;
   let listRelayoutTimer = 0;
   let listRelayoutWindow = 0;
   let listRelayoutCount = 0;
@@ -4974,17 +5955,40 @@ function setup(node) {
   };
   const tick = () => {
     if (!canvas.isConnected) return;
-    // 「布局提示词输入」接上文本后实时导入（文本没变就什么都不做）
-    try {
-      syncLayoutSocket();
-    } catch (error) {
-      console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
-    }
-    // 旧渲染把隐藏控件画成的小圆点：工作流加载完再补几次清理
-    try {
-      stripHiddenInputs();
-    } catch (error) {
-      console.error("[MOSS YXBOX] 清理隐藏参数的接入点失败", error);
+    // 下面这几项都是「每帧去问一次外部有没有变化」的轮询，本身不产生画面变化，
+    // 合并成 120ms 一次：肉眼无差别，但省掉了每帧的多次 DOM 查询与字符串比较。
+    if (Date.now() - lastLinkedSyncAt > 120) {
+      lastLinkedSyncAt = Date.now();
+      // 「布局提示词输入」接上文本后实时导入（文本没变就什么都不做）
+      try {
+        syncLayoutSocket();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
+      }
+      // 旧渲染把隐藏控件画成的小圆点：工作流加载完再补几次清理
+      try {
+        stripHiddenInputs();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 清理隐藏参数的接入点失败", error);
+      }
+      // 画布宽 / 画布高 / 画布缩放长度接了上游：上游一改，画布立刻跟着变
+      try {
+        syncLinkedCanvas();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 同步上游画布尺寸失败", error);
+      }
+      // 「导入原图」输入口接上 / 换了一张图：自动把图里存的布局提示词导入，并把图铺成背景图1
+      try {
+        syncImageImport();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 同步导入原图失败", error);
+      }
+      // 节点高度被你拖动了 / 文字高度变了 → 同步（描述框吃掉多出来的空间、删文本时节点缩回）
+      try {
+        syncNodeHeight();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 同步节点高度失败", error);
+      }
     }
     // 正在拖拽排序时跳过测量：避免和拖拽抢着触发布局计算
     if (state.reorderActive) {
@@ -4994,8 +5998,6 @@ function setup(node) {
     const width = Math.round(stage.clientWidth || 0);
     const rect = canvas.getBoundingClientRect();
     const key = `${Math.round(rect.width)}x${Math.round(rect.height)}@${window.devicePixelRatio || 1}`;
-    // 节点高度被你拖动了 / 文字高度变了 → 同步（描述框吃掉多出来的空间、删文本时节点缩回）
-    syncNodeHeight();
     // 「整体描述」对外只从我自己的 textarea 读，这里只做「外部改了原生值」时的回灌
     if (proseWidget) {
       const text = String(proseWidget.value ?? "");
@@ -5033,15 +6035,733 @@ function setup(node) {
     requestAnimationFrame(tick);
   };
 
+  // ---------------------------------------------------------------- 从 PNG 原图里提取画布数据
+  // ComfyUI 存出来的 PNG 里带两段文本：prompt（API 格式）与 workflow（界面格式）。
+  // 里面就有这个节点当时存下的「画布数据」，所以能把整份排版从原图搬回来。
+  const toast = el("div", "yx-toast");
+  root.appendChild(toast);
+  let toastTimer = 0;
+  const showToast = (text) => {
+    toast.textContent = String(text || "");
+    toast.classList.add("yx-toast-on");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastTimer = 0;
+      toast.classList.remove("yx-toast-on");
+    }, 2800);
+  };
+  state.showToast = showToast;
+
+  const pngPicker = el("input", "yx-png-picker");
+  pngPicker.type = "file";
+  pngPicker.accept = "image/png,image/*";
+  pngPicker.style.display = "none";
+  root.appendChild(pngPicker);
+
+  const utf8Text = (bytes) => {
+    try {
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch (error) {
+      return "";
+    }
+  };
+
+  // PNG 文本块（tEXt / zTXt / iTXt）→ key/value；zTXt 与压缩的 iTXt 用浏览器自带的 zlib 解压
+  const pngMetaTexts = async (buffer) => {
+    const out = new Map();
+    if (!buffer || buffer.byteLength < 16) return out;
+    const all = new Uint8Array(buffer);
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    for (let i = 0; i < 8; i += 1) {
+      if (all[i] !== signature[i]) return out;
+    }
+    const view = new DataView(buffer);
+    const inflate = async (bytes) => {
+      if (typeof DecompressionStream !== "function") return null;
+      try {
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      } catch (error) {
+        console.warn("[MOSS YXBOX] 解压图片文本失败", error);
+        return null;
+      }
+    };
+    const nulAt = (bytes, from) => {
+      let at = from;
+      while (at < bytes.length && bytes[at] !== 0) at += 1;
+      return at;
+    };
+    let at = 8;
+    while (at + 8 <= buffer.byteLength) {
+      const length = view.getUint32(at);
+      const type = utf8Text(all.subarray(at + 4, at + 8));
+      const start = at + 8;
+      const end = start + length;
+      if (end > buffer.byteLength) break;
+      const data = all.subarray(start, end);
+      if (type === "tEXt") {
+        const split = nulAt(data, 0);
+        out.set(utf8Text(data.subarray(0, split)), utf8Text(data.subarray(split + 1)));
+      } else if (type === "zTXt") {
+        const split = nulAt(data, 0);
+        const inflated = await inflate(data.subarray(split + 2));
+        if (inflated) out.set(utf8Text(data.subarray(0, split)), utf8Text(inflated));
+      } else if (type === "iTXt") {
+        const split = nulAt(data, 0);
+        const compressed = data[split + 1] === 1;
+        // 跳过 compressionMethod(1) + languageTag + translatedKeyword，剩下才是正文
+        let rest = split + 3;
+        rest = nulAt(data, rest) + 1;
+        rest = nulAt(data, rest) + 1;
+        const payload = data.subarray(rest);
+        const text = compressed ? utf8Text((await inflate(payload)) || new Uint8Array()) : utf8Text(payload);
+        if (text) out.set(utf8Text(data.subarray(0, split)), text);
+      } else if (type === "IEND") {
+        break;
+      }
+      at = end + 4;
+    }
+    return out;
+  };
+
+  // 一段文本里是不是布局 JSON（含 bbox 的数字数组）
+  const canvasDataText = (value) => {
+    const text = typeof value === "string" ? value : "";
+    if (text.length < 20) return null;
+    // 允许外面裹着说明文字 / 代码块：只要真的出现 "bbox": [数字 就交给解析器去捞
+    return /"bbox"\s*:\s*\[\s*-?\d/.test(text) ? text : null;
+  };
+
+  // 把一个对象里所有字符串摊平（ComfyUI 的 prompt / workflow 都是嵌套结构）
+  const flattenStrings = (value, out, depth = 0) => {
+    if (depth > 8 || out.length > 400) return;
+    if (typeof value === "string") {
+      out.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) flattenStrings(item, out, depth + 1);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value)) flattenStrings(item, out, depth + 1);
+    }
+  };
+
+  // 不管图是哪个节点、哪个工作流生成的：把所有文本里带 bbox 的布局 JSON 都当候选。
+  // 一类节点名是不是「出图 / 预览 / 保存」这种终点节点
+  const OUTPUT_NODE_RE = /(save|preview|display|write|export|video|combine|final|output)/i;
+
+  // 从终点节点往回走，算出「真正参与了出图」的节点（API 格式）
+  const activeNodesOfPrompt = (api) => {
+    const nodes = api && typeof api === "object" && !Array.isArray(api) ? api : {};
+    const edges = new Map(); // 节点 id → 上游节点 id 集合
+    const usedBy = new Set(); // 被别人当上游用的节点
+    for (const [id, item] of Object.entries(nodes)) {
+      for (const value of Object.values(item?.inputs || {})) {
+        if (!Array.isArray(value) || value.length !== 2) continue;
+        const src = String(value[0] ?? "");
+        if (!src || !nodes[src]) continue;
+        usedBy.add(src);
+        if (!edges.has(id)) edges.set(id, new Set());
+        edges.get(id).add(src);
+      }
+    }
+    const ids = Object.keys(nodes);
+    let roots = ids.filter((id) => OUTPUT_NODE_RE.test(String(nodes[id]?.class_type || "")));
+    if (!roots.length) roots = ids.filter((id) => !usedBy.has(id));
+    const active = new Set();
+    const stack = [...roots];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || active.has(id)) continue;
+      active.add(id);
+      for (const src of edges.get(id) || []) stack.push(src);
+    }
+    return active;
+  };
+
+  // 同上（界面格式的 workflow：靠 links 表往回走，静音节点不参与）
+  const activeNodesOfWorkflow = (flow) => {
+    const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
+    const links = Array.isArray(flow?.links) ? flow.links : [];
+    const byId = new Map();
+    for (const item of nodes) byId.set(String(item?.id ?? ""), item);
+    const edges = new Map();
+    const hasOut = new Set();
+    for (const row of links) {
+      if (!Array.isArray(row) || row.length < 5) continue;
+      const src = String(row[1] ?? "");
+      const dst = String(row[3] ?? "");
+      if (!byId.has(src) || !byId.has(dst)) continue;
+      hasOut.add(src);
+      if (!edges.has(dst)) edges.set(dst, new Set());
+      edges.get(dst).add(src);
+    }
+    const ids = [...byId.keys()];
+    let roots = ids.filter((id) => OUTPUT_NODE_RE.test(String(byId.get(id)?.type || "")));
+    if (!roots.length) roots = ids.filter((id) => !hasOut.has(id));
+    const active = new Set();
+    const stack = [...roots];
+    while (stack.length) {
+      const id = stack.pop();
+      if (!id || active.has(id)) continue;
+      const item = byId.get(id);
+      // 被静音（mode 2）的节点不执行，也不往上游传
+      if (Number(item?.mode) === 2) continue;
+      active.add(id);
+      for (const src of edges.get(id) || []) stack.push(src);
+    }
+    return active;
+  };
+
+  // 不管图是哪个节点、哪个工作流生成的：把所有文本里带 bbox 的布局 JSON 都当候选，
+  // 并标出它所在节点有没有真正参与出图（接在出图链路上 → 就是生成这张图用的那段提示词）。
+  // PNG 的 IHDR 里存着原始宽高：用来给「多份排版」排序 —— 越接近原图比例的越可能是这一张用的
+  const pngSizeOf = (buffer) => {
+    try {
+      const all = new Uint8Array(buffer);
+      if (all.length < 24) return null;
+      if (!(all[0] === 0x89 && all[1] === 0x50 && all[2] === 0x4e && all[3] === 0x47)) return null;
+      const view = new DataView(buffer);
+      const width = view.getUint32(16);
+      const height = view.getUint32(20);
+      return width > 0 && height > 0 ? { width, height } : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const mossCandidates = (meta, imageSize = null) => {
+    const list = [];
+    const seen = new Set();
+    const push = (label, value, active) => {
+      const text = canvasDataText(value);
+      if (!text) return;
+      const key = text.trim();
+      if (seen.has(key)) return;
+      seen.add(key);
+      let parsed = null;
+      try {
+        parsed = parseLayoutText(text);
+      } catch (error) {
+        parsed = null;
+      }
+      const count = parsed?.boxes?.length || 0;
+      if (!count) return;
+      const width = Number(parsed?.width) || 0;
+      const height = Number(parsed?.height) || 0;
+      const size = width >= 8 && height >= 8 ? ` · ${width}×${height}` : "";
+      const caption = String(parsed?.caption || "").trim() ? " · 带整体描述" : "";
+      const badge = active === true ? "✔ 参与出图 · " : (active === false ? "未参与出图 · " : "");
+      list.push({
+        label: `${badge}${label} · ${count} 个框${size}${caption}`,
+        json: text,
+        width,
+        height,
+        count,
+        hasCaption: !!caption,
+        active: active === true,
+        knownActive: active === true || active === false,
+      });
+    };
+    // ① ComfyUI 存的 API 格式（真正跑的那条图）：逐节点、逐输入扫
+    if (meta?.prompt) {
+      try {
+        const api = JSON.parse(meta.prompt);
+        const active = activeNodesOfPrompt(api);
+        for (const [id, item] of Object.entries(api || {})) {
+          const cls = String(item?.class_type || "未知节点");
+          const texts = [];
+          flattenStrings(item?.inputs, texts);
+          const hit = active.has(String(id));
+          for (const text of texts) push(`生成节点 ${id}（${cls}）`, text, hit);
+        }
+      } catch (error) {
+        // 不是 API 格式就算了，下面还会试界面格式
+      }
+    }
+    // ② 界面格式的 workflow：逐节点把 widgets_values / inputs 里的字符串扫一遍
+    if (meta?.workflow) {
+      try {
+        const flow = JSON.parse(meta.workflow);
+        const active = activeNodesOfWorkflow(flow);
+        for (const item of flow?.nodes || []) {
+          const cls = String(item?.type || "未知节点");
+          const texts = [];
+          flattenStrings(item?.widgets_values, texts);
+          flattenStrings(item?.inputs, texts);
+          const hit = active.has(String(item?.id ?? ""));
+          for (const text of texts) push(`工作流节点 ${item?.id}（${cls}）`, text, hit);
+        }
+      } catch (error) {
+        // 同上
+      }
+    }
+    // ③ 其它文本块（有的工具把提示词存在自己的 key 里）：判断不了是否参与出图
+    for (const [key, value] of meta?.texts || []) {
+      if (key === "prompt" || key === "workflow") continue;
+      push(`图片信息 ${key}`, value, null);
+    }
+    // 真正参与出图的排最前；其次「画布比例最接近这张原图」的（同一张图往往存了好几份排版，
+    // 尺寸比例对得上的那份才是这张图真正用的）；再其次带整体描述的、框多的
+    const target = imageSize && imageSize.width > 0 && imageSize.height > 0
+      ? imageSize.width / imageSize.height
+      : 0;
+    const gap = (item) => {
+      if (!target || !(item.width > 0) || !(item.height > 0)) return 1;
+      const ratio = item.width / item.height;
+      return Math.abs(Math.log(ratio / target));
+    };
+    list.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0)
+      || gap(a) - gap(b)
+      || (b.hasCaption ? 1 : 0) - (a.hasCaption ? 1 : 0)
+      || b.count - a.count);
+    return list;
+  };
+
+  // 一段文本像不像「人写的提示词」（用来在只有自然语言提示词时兜底放进整体描述）
+  const PROMPT_NODE_RE = /(clip|text|prompt|t5|llm|string|concat)/i;
+  const looksLikePrompt = (text) => {
+    const s = String(text || "").trim();
+    // 太短的（"best quality, highres" 这种质量词）不是画面描述，别拿它当整体描述
+    if (s.length < 30) return false;
+    if (!s.includes(" ")) return false;
+    if (/^[[{]/.test(s)) return false;
+    if (/^(https?:|\/|[A-Za-z]:\\)/.test(s)) return false;
+    if (/\.(png|jpe?g|webp|gif|safetensors|ckpt|pt|bin|json|txt)$/i.test(s)) return false;
+    if (s.includes("\"bbox\"")) return false;
+    return true;
+  };
+
+  // 找「生成这张图用的那段自然语言提示词」：只看出图链路上的节点，文本节点优先、越长的越像
+  // 负面提示词（nsfw, worst quality, bad anatomy…）不能当整体描述用，直接排除
+  const NEGATIVE_PROMPT_RE = /(^|[\s,;])(nsfw|worst quality|low quality|normal quality|bad anatomy|bad hands|extra fingers|watermark|jpeg artifact|signature|blurry|负面提示词|反向提示词)/i;
+  const bestPromptText = (meta) => {
+    const hits = [];
+    const collect = (texts, weight) => {
+      for (const text of texts) {
+        if (!looksLikePrompt(text)) continue;
+        const body = String(text).trim();
+        if (NEGATIVE_PROMPT_RE.test(body)) continue;
+        hits.push({ text: body, weight: weight * 10000 + Math.min(body.length, 9000) });
+      }
+    };
+    if (meta?.prompt) {
+      try {
+        const api = JSON.parse(meta.prompt);
+        const active = activeNodesOfPrompt(api);
+        for (const [id, item] of Object.entries(api || {})) {
+          if (!active.has(String(id))) continue;
+          const cls = String(item?.class_type || "");
+          const texts = [];
+          flattenStrings(item?.inputs, texts);
+          collect(texts, PROMPT_NODE_RE.test(cls) ? 2 : 1);
+        }
+      } catch (error) {
+        // 不是 API 格式就试界面格式
+      }
+    }
+    if (meta?.workflow && !hits.length) {
+      try {
+        const flow = JSON.parse(meta.workflow);
+        const active = activeNodesOfWorkflow(flow);
+        for (const item of flow?.nodes || []) {
+          if (!active.has(String(item?.id ?? ""))) continue;
+          const cls = String(item?.type || "");
+          const texts = [];
+          flattenStrings(item?.widgets_values, texts);
+          flattenStrings(item?.inputs, texts);
+          collect(texts, PROMPT_NODE_RE.test(cls) ? 2 : 1);
+        }
+      } catch (error) {
+        // 同上
+      }
+    }
+    hits.sort((a, b) => b.weight - a.weight);
+    return hits[0]?.text || "";
+  };
+
+  // blob:/data: 这种只在当前页面有效的地址，不进「画布数据」（否则重开工作流时是个死地址，
+  // 表现就是「莫名其妙还留着上一张图」）
+  const persistableImageUrl = (url) => (/^(blob|data):/i.test(String(url || "")) ? "" : String(url || ""));
+
+  // 应用一份候选：先把这张图按原图尺寸铺成背景图1、画布切到「按图片原始尺寸」，再导入框/描述
+  const applyPngCandidate = async (cand, imageUrl = "") => {
+    if (imageUrl) {
+      state.pngImageUrl = imageUrl;
+      // 原图有一行自己的位置（背景图区里标着「原图」的那行），不占背景图编号
+      const bg = ensureSourceBg();
+      const image = await loadImage(imageUrl);
+      if (!image) {
+        // 这张图打不开就别把上一张图留在画布上，免得看着像「导进来的是一张别的图」
+        bg.image = null;
+        bg.url = "";
+        bg.natW = 0;
+        bg.natH = 0;
+        bg.hidden = true;
+        showToast("导入原图：这张图打不开，先把原图那一行清空了");
+        paint();
+        return false;
+      }
+      bg.image = image;
+      bg.url = persistableImageUrl(imageUrl);
+      bg.natW = image.naturalWidth || image.width || 0;
+      bg.natH = image.naturalHeight || image.height || 0;
+      bg.hidden = false;
+      // 画布尺寸来源切成「按导入原图的原始尺寸」：画布＝原图像素尺寸（这一档不取整）
+      syncSizeModeOptions();
+      if (wMode) wMode.value = MODE_SOURCE;
+      if (bg.natW >= 8 && bg.natH >= 8) applyCanvasSize(Math.round(bg.natW), Math.round(bg.natH), true);
+      // 原图铺满画布：画布与原图等大，所以就是 1:1 全画布
+      fillBgIntoCanvas(bg);
+      syncSizeModeOptions();
+    }
+    const custom = String(wMode?.value ?? "自定义尺寸") === "自定义尺寸";
+    if (!imageUrl && custom && cand?.width >= 8 && cand?.height >= 8) {
+      // 没有配图时（理论上不会走到）：按 JSON 里的画布尺寸写回
+      if (wWidth) wWidth.value = String(cand.width);
+      if (wHeight) wHeight.value = String(cand.height);
+      applyCanvasSize(cand.width, cand.height, true);
+    }
+    const text = String(cand?.json || "");
+    const ok = text ? applyLayoutText(text) : false;
+    if (!ok) {
+      showToast(cand?.captionOnly ? "这段提示词读不出来" : "原图里的画布数据读不出来（可能被截断了）");
+      return false;
+    }
+    refreshInfo();
+    commit();
+    paint();
+    showToast(cand?.captionOnly
+      ? "这张图用的是自然语言提示词，已放进「整体描述」"
+      : `已从原图恢复 ${S.boxes.length} 个框`);
+    return true;
+  };
+
+  const openPngChooser = (cands, anchorEl, imageUrl = "") => {
+    closeMenu();
+    state.menuSticky = true;
+    menu.textContent = "";
+    menu.appendChild(el("div", "yx-menu-title", `原图里有 ${cands.length} 份排版，选一份导入`));
+    for (const cand of cands) {
+      menuItem(cand.label, () => {
+        closeMenu();
+        applyPngCandidate(cand, imageUrl);
+      });
+    }
+    const rect = (anchorEl || root).getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const k = viewScale(root) || 1;
+    const boxW = root.clientWidth || rootRect.width;
+    const boxH = root.clientHeight || rootRect.height;
+    menu.style.display = "block";
+    const mw = menu.offsetWidth || 220;
+    const mh = menu.offsetHeight || 160;
+    let left = (rect.left - rootRect.left) / k;
+    let top = (rect.bottom - rootRect.top) / k + 4;
+    if (left + mw > boxW - 6) left = Math.max(6, boxW - mw - 6);
+    if (top + mh > boxH - 6) top = Math.max(6, boxH - mh - 6);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+
+  // 一份 PNG（来自文件选择或上游导入原图接口）→ 找回布局提示词 + 把图铺成背景图
+  const rememberCandidates = (pool, imageUrl) => {
+    state.pngCandidates = pool.length > 1 ? pool.slice() : [];
+    state.pngImageUrl = imageUrl || "";
+    syncLayoutSwitch();
+  };
+
+  const runImageImport = async (buffer, imageUrl, anchorEl) => {
+    state.pngCandidates = [];
+    state.pngImageUrl = "";
+    syncLayoutSwitch();
+    let meta = new Map();
+    try {
+      meta = await pngMetaTexts(buffer);
+    } catch (error) {
+      console.warn("[MOSS YXBOX] 读取原图信息失败", error);
+      showToast("这个文件读不出来，换一张试试");
+      return;
+    }
+    const payload = {
+      prompt: meta.get("prompt") || meta.get("Prompt") || "",
+      workflow: meta.get("workflow") || meta.get("Workflow") || "",
+      texts: meta,
+    };
+    const imageSize = pngSizeOf(buffer);
+    const cands = mossCandidates(payload, imageSize);
+    const activeCands = cands.filter((cand) => cand.active);
+    const pool = activeCands.length ? activeCands : cands;
+    if (pool.length === 1) {
+      rememberCandidates(pool, imageUrl);
+      await applyPngCandidate(pool[0], imageUrl);
+      return;
+    }
+    if (pool.length > 1) {
+      rememberCandidates(pool, imageUrl);
+      openPngChooser(pool, anchorEl, imageUrl);
+      return;
+    }
+    rememberCandidates([], imageUrl);
+    // 没有布局 JSON：生成这张图用的是自然语言提示词 → 放进「整体描述」，不生成框
+    const prompt = bestPromptText(payload);
+    if (prompt) {
+      await applyPngCandidate({ json: prompt, captionOnly: true }, imageUrl);
+      return;
+    }
+    // 连提示词都没有：至少把图当背景图放进来，让用户自己画框
+    if (imageUrl) await applyPngCandidate(null, imageUrl);
+    showToast(meta.size
+      ? "这张图里没找到生成用的提示词，已只把图片放进背景图1（当前画布按原图尺寸）"
+      : "这张图没有文件信息（被压缩工具抹掉了），只把图片放进背景图1");
+  };
+
+  // 「导入原图」输入口接的上游节点里选的那张图 → /view 地址候选（拿不到就返回空）
+  // 上游不一定是 LoadImage：任何节点，只要某个参数是图片文件名，都认；
+  // 关键：要读「控件当前值」（node.widgets[i].value），不能只读 widgets_values ——
+  // 在 LoadImage 里换图时，新版前端不一定同步写回 widgets_values，读它就会永远是接上那一刻的旧图。
+  const IMAGE_WIDGET_RE = /^(image|file|filename|image_path|图片|图像|文件名|图像路径)$/i;
+  const upstreamImageFilesOf = (slotName) => {
+    const empty = { keys: [], urls: [] };
+    const slot = inputSlot(slotName);
+    const originId = linkOriginId(slot);
+    if (originId == null) return empty;
+    const graphs = [app?.graph, node.graph].filter(Boolean);
+    let origin = null;
+    for (const graph of graphs) {
+      origin = graph?.getNodeById?.(originId) || null;
+      if (origin) break;
+    }
+    if (!origin) return empty;
+
+    const widgets = Array.isArray(origin.widgets) ? origin.widgets : [];
+    const values = Array.isArray(origin.widgets_values) ? origin.widgets_values : [];
+    const raw = [];
+    // 1) 名字对得上的参数：先读控件当前值，读不到再按位置回退 widgets_values
+    widgets.forEach((w, index) => {
+      if (!IMAGE_WIDGET_RE.test(String(w?.name || ""))) return;
+      if (typeof w?.value === "string" && w.value) raw.push(w.value);
+      if (typeof values[index] === "string" && values[index]) raw.push(values[index]);
+    });
+    // 2) LoadImage 上刚换的预览图（新版前端会挂在 node.images / node.imgs 上）
+    for (const key of ["images", "imgs"]) {
+      const list = origin[key];
+      if (!Array.isArray(list)) continue;
+      list.forEach((item) => {
+        const name = item?.filename || item?.name || item?.image;
+        if (typeof name === "string" && name) raw.push(item?.subfolder ? `${item.subfolder}/${name}` : name);
+      });
+    }
+    // 3) 兜底：扫这个节点上所有字符串（含 widgets_values）
+    widgets.forEach((w) => {
+      if (typeof w?.value === "string" && w.value) raw.push(w.value);
+    });
+    values.forEach((value) => {
+      if (typeof value === "string") raw.push(value);
+    });
+
+    const files = new Map();
+    raw.forEach((entry) => {
+      const text = String(entry ?? "").trim();
+      if (!text || !/\.(png|jpe?g|webp|gif|bmp)$/i.test(text)) return;
+      // 完整的本地磁盘路径（D:\…）在浏览器里取不到，直接跳过
+      if (/^[a-z]:[\\/]/i.test(text) || /^\\\\/.test(text)) return;
+      const cut = text.lastIndexOf("/");
+      const subfolder = cut >= 0 ? text.slice(0, cut) : "";
+      const name = cut >= 0 ? text.slice(cut + 1) : text;
+      const key = `${subfolder}|${name}`;
+      if (files.has(key)) return;
+      const urls = [];
+      for (const type of ["input", "temp", "output"]) {
+        urls.push(`/view?filename=${encodeURIComponent(name)}&type=${type}&subfolder=${encodeURIComponent(subfolder)}`);
+      }
+      files.set(key, urls);
+    });
+    const keys = [...files.keys()];
+    const urls = keys.flatMap((key) => files.get(key));
+    return { keys, urls };
+  };
+
+  // 逐个地址试，第一次拿到的、真的像图片的字节就用它
+  const fetchPngBuffer = async (urls) => {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (!res?.ok) continue;
+        const buffer = await res.arrayBuffer();
+        const head = new Uint8Array(buffer.slice(0, 8));
+        const png = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+        const jpg = head[0] === 0xff && head[1] === 0xd8;
+        if (!png && !jpg) continue;
+        return { url, buffer };
+      } catch (error) {
+        // 换下一个 type / 下一个地址继续试
+      }
+    }
+    return null;
+  };
+
+  // 同名文件被覆盖时（文件名没变、内容变了）也要能发现：每 5 秒打一次 Range 探针，
+  // 比「总字节数 / Last-Modified / 文件头」这三样，任一变就当作换了图。
+  // 只读前 64 字节（服务端支持 Range 时），不会把整张大图重新拉一遍。
+  const IMAGE_STAMP_INTERVAL = 5000;
+  const stampOfUrl = async (url) => {
+    if (!url) return "";
+    try {
+      const res = await fetch(url, { headers: { Range: "bytes=0-63" }, cache: "no-store" });
+      if (!res) return "";
+      const status = Number(res.status || 0);
+      if (status !== 206 && !(status === 200 || res.ok)) return "";
+      const header = (name) => {
+        try {
+          return String(res.headers?.get?.(name) || "");
+        } catch (error) {
+          return "";
+        }
+      };
+      const range = header("content-range");
+      const total = Number(String(range).split("/")[1]) || Number(header("content-length")) || 0;
+      const modified = header("last-modified");
+      let head = "";
+      if (status === 206) {
+        // 只有真的是分段响应时才读这点正文，避免服务端不支持 Range 时把整张图拉下来
+        try {
+          const bytes = new Uint8Array(await res.arrayBuffer()).slice(0, 64);
+          head = [...bytes].join(",");
+        } catch (error) {
+          head = "";
+        }
+      }
+      return `${total}|${modified}|${head}`;
+    } catch (error) {
+      return "";
+    }
+  };
+
+  // 接口上的图变了就重新导入一次。
+  // 用「文件名+子目录」当指纹（不用 /view 地址，地址随 type 变化会误判）；
+  // 读失败时把指纹清掉，下一帧还会再试，不会卡在「试过一次就永远不试」；
+  // 每次请求带序号，上游又换图时旧请求的结果直接丢弃，避免把上一张图的数据贴上来。
+  const syncImageImport = async () => {
+    const files = upstreamImageFilesOf("导入原图");
+    if (!files.keys.length) {
+      if (state.imageImportSource) {
+        state.imageImportSource = "";
+        state.imageImportOk = false;
+        state.imageStamp = "";
+        state.imageStampUrl = "";
+        state.imageStampAt = 0;
+        state.imageImportSeq = (state.imageImportSeq || 0) + 1;
+        state.pngCandidates = [];
+        state.pngImageUrl = "";
+        syncLayoutSwitch();
+      }
+      return;
+    }
+    const fingerprint = files.keys.join("|");
+    if (fingerprint === state.imageImportSource && state.imageImportOk) {
+      // 同名文件被覆盖：定期用「大小 / 修改时间 / 文件头」探一下，变了就重新导入
+      if (state.imageImportBusy) return;
+      if (Date.now() - (state.imageStampAt || 0) < IMAGE_STAMP_INTERVAL) return;
+      state.imageImportBusy = true;
+      try {
+        const stamp = await stampOfUrl(state.imageStampUrl);
+        state.imageStampAt = Date.now();
+        if (stamp && state.imageStamp && stamp !== state.imageStamp) {
+          state.imageImportOk = false;
+          state.imageImportSource = "";
+          state.imageImportBusy = false;
+          // 交给下一帧按「新图」走正常导入流程
+          return;
+        }
+        if (stamp && !state.imageStamp) state.imageStamp = stamp;
+      } finally {
+        state.imageImportBusy = false;
+      }
+      return;
+    }
+    if (state.imageImportBusy) {
+      // 正在读上一张：记下新指纹，等它读完再补一次
+      state.imageImportAgain = true;
+      return;
+    }
+    const seq = (state.imageImportSeq || 0) + 1;
+    state.imageImportSeq = seq;
+    state.imageImportSource = fingerprint;
+    state.imageImportOk = false;
+    state.imageImportBusy = true;
+    state.imageImportAgain = false;
+    try {
+      const got = await fetchPngBuffer(files.urls);
+      if (seq !== state.imageImportSeq) return;
+      if (!got) {
+        state.imageImportSource = "";
+        showToast("导入原图：接进来的这张图读不出来（上游可能不是图像节点，或图片不在 input 目录）");
+        return;
+      }
+      state.imageImportOk = true;
+      state.imageStampUrl = got.url;
+      state.imageBytes = Number(got.buffer?.byteLength) || 0;
+      state.imageStamp = await stampOfUrl(got.url);
+      state.imageStampAt = Date.now();
+      await runImageImport(got.buffer, got.url, pngBtn);
+    } catch (error) {
+      if (seq === state.imageImportSeq) state.imageImportSource = "";
+      console.warn("[MOSS YXBOX] 导入原图接口读取失败", error);
+      showToast("导入原图：这张图读不出来");
+    } finally {
+      if (seq === state.imageImportSeq) {
+        state.imageImportBusy = false;
+        if (state.imageImportAgain) {
+          state.imageImportAgain = false;
+          state.imageImportSource = "";
+          state.imageImportOk = false;
+        }
+      }
+    }
+  };
+
+  const startPngImport = () => {
+    pngPicker.value = "";
+    pngPicker.click();
+  };
+
+  pngPicker.addEventListener("change", async () => {
+    const file = pngPicker.files && pngPicker.files[0];
+    pngPicker.value = "";
+    if (!file) return;
+    let buffer = null;
+    try {
+      buffer = await file.arrayBuffer();
+    } catch (error) {
+      showToast("这个文件读不出来，换一张试试");
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    await runImageImport(buffer, url, pngBtn);
+  });
+
   // ---------------------------------------------------------------- 导入 / 导出布局提示词
   const captionWidget = () => widget("整体描述");
   const readCaption = () => String(captionWidget()?.value ?? "");
 
   // 与 nodes.py 的 _boxes_to_regions / _norm_bbox / _compile_layout_local 逐行对应
+  // 最终提示词 = 前置文字 + 布局 JSON + 后置文字（都为空时就是原来的样子）
+  const composeFinalPrompt = (layout) => {
+    const parts = [
+      String(state.prefix || "").trim(),
+      String(layout || "").trim(),
+      String(state.suffix || "").trim(),
+    ].filter(Boolean);
+    return parts.join("\n");
+  };
+
   const compileLayoutText = () => {
     const caption = readCaption();
     const visible = S.boxes.filter((box) => !box.hidden);
-    if (!visible.length) return caption; // 没有框：后端就是原样输出描述
+    if (!visible.length) return composeFinalPrompt(caption); // 没有框：后端就是原样输出描述
     const W = Math.max(1, S.width);
     const H = Math.max(1, S.height);
     const grid = (value) => Math.max(0, Math.min(1000, Math.round(value * 1000)));
@@ -5068,12 +6788,12 @@ function setup(node) {
       ];
       return item;
     });
-    return JSON.stringify({
+    return composeFinalPrompt(JSON.stringify({
       summary: { caption: caption.trim() },
       items,
       bbox_coord_space: "abs_centralized",
       bbox_format: "yxyx",
-    });
+    }));
   };
 
   const closeModal = () => {
@@ -5161,45 +6881,312 @@ function setup(node) {
     return (fence ? fence[1] : text).trim();
   };
 
+  // 从聊天窗口 / 网页里复制出来的 JSON 经常带伤，按顺序分步修补，第一步能解析成功就用：
+  // 字符串里的真换行 / 制表符 → 转义；末尾多余逗号 → 删掉；全角引号 → 半角（只在前面都失败时才动，
+  // 免得把正文里本来就有的弯引号改成引号、反而把 JSON 弄坏）。
+  const escapeControlChar = (ch) => {
+    const code = ch.charCodeAt(0);
+    if (ch === "\n") return "\\n";
+    if (ch === "\r") return "\\r";
+    if (ch === "\t") return "\\t";
+    if (ch === "\b") return "\\b";
+    if (ch === "\f") return "\\f";
+    const hex = code.toString(16).padStart(4, "0");
+    return `\\u${hex}`;
+  };
+  const escapeJsonStrings = (text) => {
+    const src = String(text || "");
+    let out = "";
+    let inString = false;
+    for (let i = 0; i < src.length; i += 1) {
+      const ch = src[i];
+      if (!inString) {
+        out += ch;
+        if (ch === '"') inString = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      if (ch === "\\") {
+        const next = src[i + 1];
+        if (next === undefined) {
+          out += "\\\\";
+          continue;
+        }
+        // \ 后面跟着真换行/控制字符：多半是 「\n」被编辑器折行了，按换行处理
+        if (next.charCodeAt(0) < 0x20) {
+          out += escapeControlChar(next);
+          i += 1;
+          continue;
+        }
+        out += ch + next;
+        i += 1;
+        continue;
+      }
+      // 字符串里的任何裸控制字符（换行、制表符、垂直制表符…）都要转义，否则 JSON.parse 一定失败
+      if (ch.charCodeAt(0) < 0x20) {
+        out += escapeControlChar(ch);
+        continue;
+      }
+      out += ch;
+    }
+    return out;
+  };
+  const stripTrailingCommas = (text) => String(text || "").replace(/,(\s*[}\]])/g, "$1");
+  const straightenQuotes = (text) => String(text || "")
+    .replace(/[\u201c\u201d\uff02]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'");
+
+  let lastJsonError = "";
   const jsonSlice = (text) => {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(text.slice(start, end + 1));
-    } catch {
+    if (start < 0 || end <= start) {
+      lastJsonError = "";
       return null;
     }
+    const body = text.slice(start, end + 1);
+    const candidates = [
+      body,
+      escapeJsonStrings(body),
+      stripTrailingCommas(escapeJsonStrings(body)),
+      straightenQuotes(stripTrailingCommas(escapeJsonStrings(body))),
+      stripTrailingCommas(body),
+      straightenQuotes(stripTrailingCommas(body)),
+      straightenQuotes(body),
+    ];
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed) {
+          lastJsonError = "";
+          return parsed;
+        }
+      } catch (error) {
+        lastJsonError = String(error?.message || error || "");
+      }
+    }
+    // 把出错位置附近的一小段原文留着，方便定位
+    const position = Number((lastJsonError.match(/position (\d+)/) || [])[1]);
+    if (Number.isFinite(position) && position > 0) {
+      const from = Math.max(0, position - 24);
+      const snippet = body.slice(from, position + 24).replace(/\n/g, "⏎");
+      lastJsonError = `${lastJsonError}；出错位置附近的原文：${snippet}`;
+    }
+    return null;
   };
 
-  const LABEL_TO_TYPE = { text: "文字框", character: "角色框", object: "物体框", obj: "物体框" };
+  // 框内文字统一折成「带换行的字符串」：既吃得下字符串（含 \n 转义/真换行），
+  // 也吃得下行数组 ["ZERO","REPLICATION"]（有的反推规则为了不踩 JSON 转义，把多行文字写成数组）。
+  const textValue = (raw) => {
+    if (Array.isArray(raw)) {
+      return raw
+        .map((line) => (line === null || line === undefined ? "" : String(line)))
+        .join("\n");
+    }
+    if (raw === null || raw === undefined) return "";
+    return String(raw).replace(/\r\n?/g, "\n");
+  };
+
+  // 标签 → 中文框类型。英文（layout 提示词里的 character/object/text）和中文
+  // （画布数据里的角色框/物体框/文字框）都要认，否则整份都会退化成物体框。
+  const LABEL_TO_TYPE = {
+    text: "文字框", 文字框: "文字框", 文字: "文字框", 文案: "文字框", title: "文字框",
+    character: "角色框", char: "角色框", person: "角色框", people: "角色框", figure: "角色框",
+    角色框: "角色框", 角色: "角色框", 人物: "角色框",
+    object: "物体框", obj: "物体框", thing: "物体框", item: "物体框", prop: "物体框",
+    物体框: "物体框", 物体: "物体框",
+  };
+
+  // 最后兜底：整段 JSON 怎么修都解析不了时，直接按文本扫描 `"bbox":[...]` 捞框，
+  // 至少不会白粘一段。宁可少几个字段，也不要一个框都不建。
+  const decodeJsonString = (raw) => {
+    if (!raw) return "";
+    try {
+      return JSON.parse('"' + raw + '"');
+    } catch (_error) {
+      return String(raw).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    }
+  };
+  const collectStrings = (fragment, name) => {
+    const found = [];
+    if (!fragment) return found;
+    const re = new RegExp('"' + name + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', "g");
+    let match;
+    while ((match = re.exec(fragment))) found.push(decodeJsonString(match[1]));
+    return found;
+  };
+  // 从 src 的 quoteIndex 处引号开始读一个 JSON 字符串（认转义、也认字符串里的真换行）
+  const unescapeJsonText = (raw) => String(raw).replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_all, ch) => {
+    if (ch[0] === "u") return String.fromCharCode(parseInt(ch.slice(1), 16));
+    const map = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", '"': '"', "\\": "\\", "/": "/" };
+    return Object.prototype.hasOwnProperty.call(map, ch) ? map[ch] : ch;
+  });
+
+  const jsonStringAt = (src, quoteIndex) => {
+    if (src[quoteIndex] !== '"') return "";
+    let out = "";
+    for (let i = quoteIndex + 1; i < src.length; i += 1) {
+      const ch = src[i];
+      if (ch === "\\") {
+        const next = src[i + 1];
+        if (next === undefined) break;
+        out += ch + next;
+        i += 1;
+        continue;
+      }
+      if (ch === '"') return unescapeJsonText(out);
+      out += ch;
+    }
+    // 收尾引号被截掉了：把已有的内容解出来，总比整段整体描述丢掉强
+    return unescapeJsonText(out);
+  };
+
+  // 在 fragment 里找最后一个 name 字段的字符串值（caption 可能有几千字符、还带真换行）
+  const lastJsonText = (fragment, name) => {
+    const re = new RegExp('"' + name + '"\\s*:\\s*"', "g");
+    let match;
+    let last = null;
+    while ((match = re.exec(fragment))) last = match;
+    if (!last) return "";
+    return jsonStringAt(fragment, last.index + last[0].length - 1);
+  };
+
+  const salvageData = (text) => {
+    const src = String(text || "");
+    const bboxes = [];
+    const re = /"bbox"\s*:\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/g;
+    let match;
+    while ((match = re.exec(src))) {
+      bboxes.push({
+        index: match.index,
+        values: [match[1], match[2], match[3], match[4]].map((value) => Number(value)),
+      });
+    }
+    if (!bboxes.length) return null;
+    const items = bboxes.map((entry, i) => {
+      const head = src.slice(Math.max(0, entry.index - 4000), entry.index);
+      const tailEnd = i + 1 < bboxes.length
+        ? bboxes[i + 1].index
+        : Math.min(src.length, entry.index + 400);
+      const tail = src.slice(entry.index, tailEnd);
+      const pick = (name) => {
+        const headValue = lastJsonText(head, name);
+        if (headValue) return headValue;
+        const tailValues = collectStrings(tail, name);
+        return tailValues.length ? tailValues[0] : "";
+      };
+      return {
+        label: pick("label") || pick("type"),
+        caption: pick("caption") || pick("desc"),
+        text: pick("text"),
+        bbox: entry.values,
+      };
+    });
+    let summaryCaption = "";
+    // 整体描述在 summary.caption 里，往往几千字符、可能带真换行：
+    // 不能用「切 1500 字符窗口 + 正则」的老办法（窗口一刀切就把 caption 截没了）
+    const summary = src.match(/"summary"\s*:\s*\{/);
+    if (summary) {
+      const after = src.slice(summary.index);
+      const captionField = /"caption"\s*:\s*"/.exec(after);
+      if (captionField) {
+        summaryCaption = jsonStringAt(after, captionField.index + captionField[0].length - 1);
+      }
+    }
+    let widthMatch = src.match(/"width"\s*:\s*(\d+)/);
+    let heightMatch = src.match(/"height"\s*:\s*(\d+)/);
+    // bbox_coord_space / bbox_format 这些声明都写在 JSON 末尾，文本被截断时就一起没了。
+    // 这时不能瞎猜成「左上原点像素」：官方编译格式（abs_centralized + yxyx）的值是
+    // 相对画布中心的偏移，必然出现负数；草稿（左上原点 xyxy）不会。所以只要看到负数，
+    // 就按居中格式处理，画布尺寸用 2×最大绝对偏移倒推 —— 否则按「最大正坐标」估算会把
+    // 整张图的框按两个方向不同倍率拉伸（这正是上游文本截断后框全乱的原因）。
+    const declared = /abs_centralized/.test(src) || /"bbox_format"\s*:\s*"yxyx"/.test(src);
+    const hasNegative = bboxes.some((entry) => entry.values.some((value) => value < 0));
+    const centered = declared || hasNegative;
+    if (centered && (!widthMatch || !heightMatch)) {
+      let maxAbsX = 0;
+      let maxAbsY = 0;
+      for (const entry of bboxes) {
+        const values = entry.values;
+        maxAbsX = Math.max(maxAbsX, Math.abs(values[1]), Math.abs(values[3]));
+        maxAbsY = Math.max(maxAbsY, Math.abs(values[0]), Math.abs(values[2]));
+      }
+      // 画布宽高必须是 16 的倍数，倒推值对齐到最近的 16 的倍数
+      const snap16 = (value) => Math.max(16, Math.round(value / 16) * 16);
+      if (!widthMatch) widthMatch = maxAbsX > 0 ? [null, String(snap16(maxAbsX * 2))] : null;
+      if (!heightMatch) heightMatch = maxAbsY > 0 ? [null, String(snap16(maxAbsY * 2))] : null;
+    }
+    return {
+      items,
+      width: widthMatch ? Number(widthMatch[1]) : 0,
+      height: heightMatch ? Number(heightMatch[1]) : 0,
+      bbox_coord_space: centered ? "abs_centralized" : "abs",
+      bbox_format: centered ? "yxyx" : "xyxy",
+      summary: { caption: summaryCaption },
+    };
+  };
+
+  // 把整段文本切成「JSON 区间前 / JSON 区间 / JSON 区间后」。
+  // 只按位置判定（第一个 { 到最后一个 }），不去猜标点——参不参与布局，就是区间内外的区别。
+  const splitJsonOutside = (raw) => {
+    const whole = String(raw || "");
+    const start = whole.indexOf("{");
+    if (start < 0) return { prefix: "", json: "", suffix: "", whole };
+    const close = whole.lastIndexOf("}");
+    const end = close > start ? close : whole.length - 1;
+    return {
+      prefix: whole.slice(0, start).trim(),
+      json: whole.slice(start, end + 1),
+      suffix: whole.slice(end + 1).trim(),
+      whole,
+    };
+  };
 
   const parseLayoutText = (raw) => {
     const text = stripCodeFence(raw);
     if (!text) return { error: "内容是空的，先粘贴一段布局内容" };
-    const data = jsonSlice(text);
+    const split = splitJsonOutside(text);
+    let salvaged = false;
+    let data = jsonSlice(split.json || text);
+    if (!data && /"bbox"\s*:/.test(text)) {
+      data = salvageData(text);
+      salvaged = !!data;
+    }
     if (!data) {
       if (text.startsWith("{") || text.startsWith("[")) {
-        return { error: "这段 JSON 解析不了，检查一下引号、逗号或括号" };
+        const detail = lastJsonError ? `\n解析器原话：${lastJsonError}` : "";
+        return { error: `这段 JSON 解析不了（字符串里带真换行、末尾多逗号、全角引号都会这样）。插件已经自动修过一遍仍失败，请检查引号、逗号或括号${detail}` };
       }
-      return { kind: "caption", caption: text };
+      return { kind: "caption", caption: text, prefix: "", suffix: "" };
+    }
+    if (salvaged) {
+      console.warn("[MOSS YXBOX] 这段 JSON 解析不了，已按 bbox 兜底提取出框；建议检查引号与括号");
     }
     if (!Array.isArray(data.items)) {
-      // 也认别的写法：compositional_deconstruction.elements / elements / boxes
-      const alt = data.compositional_deconstruction?.elements || data.elements || data.boxes;
+      // 也认别的写法：summary.items（有些模型把 items 塞在 summary 里）/
+      // compositional_deconstruction.elements / elements / boxes
+      const alt = data.summary?.items || data.summary?.elements
+        || data.compositional_deconstruction?.elements || data.elements || data.boxes;
       if (!Array.isArray(alt)) {
         const caption = String(
           data.caption ?? data.summary?.caption ?? data.high_level_description ?? data.description ?? ""
         ).trim();
         if (!caption) return { error: "没找到 items 列表，也没找到 caption 描述" };
-        return { kind: "caption", caption };
+        return { kind: "caption", caption, prefix: "", suffix: "" };
       }
       data.items = alt;
     }
     const space = String(data.bbox_coord_space || "abs").toLowerCase();
     const fmt = String(data.bbox_format || "xyxy").toLowerCase();
-    // 草稿如果声明了左下角原点（第一象限），导入时把 y 翻成画布内部的左上原点
-    const bottomLeft = /bottom|下/.test(String(data.bbox_origin || "").toLowerCase());
+    // 草稿如果声明了左下角原点（第一象限），导入时把 y 翻成画布内部的左上原点。
+    // 例外：本插件 1.0.3 及更早版本导出的草稿写着 `bbox_origin: bottom-left`，但里面的数字其实是左上原点
+    // （当时只有这个标签写错了，数值一直是左上向下）。这种带 `canvas` 包装的老草稿照左上原点读，才不会上下镜像。
+    const legacyOwnDraft = !!(data.canvas && data.bbox_origin);
+    const bottomLeft = !legacyOwnDraft && /bottom|下/.test(String(data.bbox_origin || "").toLowerCase());
     // 编译后的格式：原点在画布中心、yxyx；其它一律当草稿的左上原点 xyxy 处理
     const compiled = space.indexOf("centralized") >= 0 || fmt === "yxyx";
     // 来源尺寸：显式 width/height 优先；没有的话（比如只给 elements 的草稿）按所有 bbox 的最大范围推断
@@ -5286,18 +7273,22 @@ function setup(node) {
       const w = Math.round(x2 - x1);
       const h = Math.round(y2 - y1);
       if (w < 8 || h < 8) continue;
-      const label = String(item.label || item.type || "").trim().toLowerCase();
+      // 画布数据里 label 是显示用的编号（"01" / "B1"），真正的类型在 type 里；
+      // 模型输出的布局 JSON 反过来是 label 放类型。先认能对上类型的那个。
+      const typeRaw = String(item.type || "").trim().toLowerCase();
+      const labelRaw = String(item.label || "").trim().toLowerCase();
+      const typeKey = LABEL_TO_TYPE[typeRaw] ? typeRaw : labelRaw;
       const palette = (Array.isArray(item.palette) ? item.palette
         : (Array.isArray(item.color_palette) ? item.color_palette : []))
         .filter((color) => typeof color === "string" && color.trim())
         .slice(0, 5);
       boxes.push({
-        type: LABEL_TO_TYPE[label] || "物体框",
+        type: LABEL_TO_TYPE[typeKey] || "物体框",
         x: Math.round(x1),
         y: Math.round(y1),
         w,
         h,
-        text: String(item.text ?? ""),
+        text: textValue(item.text),
         desc: String(item.caption ?? item.desc ?? ""),
         palette,
       });
@@ -5311,6 +7302,8 @@ function setup(node) {
         data.summary?.caption ?? data.caption ?? data.high_level_description ?? data.description ?? ""
       ),
       boxes,
+      prefix: split.prefix,
+      suffix: split.suffix,
     };
   };
 
@@ -5339,6 +7332,9 @@ function setup(node) {
     if (parsed.caption && captionWidget()) {
       captionWidget().value = parsed.caption;
     }
+    // 前置 / 后置跟这份排版一起换（弹窗整段导入时同样按 JSON 区间切出来的那两段）
+    setSideProse(parsed.prefix ?? "", parsed.suffix ?? "");
+    applySideHeights();
     // items 是「从背景到前景」，列表越靠上越上层，所以倒过来放
     S.boxes = boxes.reverse().map((box) => ({
       type: box.type,
@@ -5473,10 +7469,68 @@ function setup(node) {
       const type = String(item?.type || "").toLowerCase();
       if (["number", "toggle", "combo", "button", "slider"].includes(type)) return false;
       if (typeof item?.value !== "string") return false;
+      if (HIDDEN_WIDGETS.has(String(item.name || ""))) return false; // 内部数据（画布数据）不能当提示词读
       return !item.name?.match(/^(image|图像|图片|filename|mask|遮罩)$/i);
     };
+    const readOutputValue = (keys) => {
+      const pools = [];
+      const live = app.nodeOutputs?.[originId];
+      if (live && typeof live === "object") pools.push(live);
+      if (origin?.outputs && typeof origin.outputs === "object") pools.push(origin.outputs);
+      for (const pool of pools) {
+        for (const key of keys) {
+          const raw = pool[key];
+          const value = Array.isArray(raw) ? raw[0] : raw;
+          if (typeof value === "string" && value.trim()) return value;
+        }
+      }
+      return null;
+    };
+    // 0) 上游是本插件节点：它的「画布数据」里就有带类型的框，比读文本更准
+    //    （A 的 布局提示词 输出在执行时才出现在 nodeOutputs 里，点运行时读不到也不该丢框）
+    const canvasWidget = (origin?.widgets || []).find((item) =>
+      String(item?.name || "") === "画布数据" && typeof item?.value === "string" && item.value.trim());
+    if (canvasWidget) {
+      const canvasData = jsonSlice(canvasWidget.value);
+      if (canvasData && Array.isArray(canvasData.boxes) && canvasData.boxes.length) {
+        const captionOfOrigin = (origin?.widgets || []).find((item) =>
+          String(item?.name || "") === "整体描述" && typeof item?.value === "string");
+        if (captionOfOrigin && captionOfOrigin.value.trim() && !canvasData.caption) {
+          canvasData.caption = captionOfOrigin.value;
+        }
+        // 画布数据里不存画布尺寸，就从上游的「画布宽 / 画布高」参数补；
+        // 都读不到才退回自己画布的尺寸（这时坐标按等比缩放换算）
+        const originNum = (names) => {
+          for (const name of names) {
+            const widget = (origin?.widgets || []).find((item) => String(item?.name || "") === name);
+            const value = Number(widget?.value);
+            if (Number.isFinite(value) && value > 0) return Math.round(value);
+          }
+          return 0;
+        };
+        canvasData.width = Math.round(Number(canvasData.width) || originNum(["画布宽"]) || S.width);
+        canvasData.height = Math.round(Number(canvasData.height) || originNum(["画布高"]) || S.height);
+        canvasData.bbox_coord_space = "abs";
+        canvasData.bbox_format = "xyxy";
+        delete canvasData.bgs; // 背景图属于各自节点，不搬过来
+        return JSON.stringify(canvasData);
+      }
+    }
+    // 1) 上游真正的「布局提示词」输出（本插件节点之间串联走的就是这条，
+    //    拿到的就是编译好、类型完整的布局 JSON）
+    const layoutOut = readOutputValue(
+      ["布局提示词", "布局提示词输出", "layout_prompt", "layoutPrompt", "layout"]);
+    if (layoutOut != null) return layoutOut;
+
     const widgetsOfOrigin = (origin?.widgets || []).filter(isTextWidget);
-    // 优先认名字像文本的那些（文本框 / 提示词 / 描述），避免抓到别的字符串参数
+    // 2) 像布局 JSON 的文本优先（本插件节点自己那个「布局提示词输入」里可能是上一手的 JSON）
+    const looksLayout = (item) => {
+      const text = String(item.value || "");
+      return text.includes('"bbox"') && (text.includes('"items"') || text.includes('"bboxes"'));
+    };
+    const layoutWidget = widgetsOfOrigin.find(looksLayout);
+    if (layoutWidget) return layoutWidget.value;
+    // 3) 再按名字认文本框 / 提示词 / 描述
     const preferred = widgetsOfOrigin.find((item) =>
       /^(text|string|prompt|value|文本|文字|描述|提示词)$/i.test(String(item.name || "").trim()));
     if (preferred) return preferred.value;
@@ -5485,21 +7539,21 @@ function setup(node) {
       return widgetsOfOrigin.reduce((best, item) =>
         (String(item.value).length > String(best.value).length ? item : best)).value;
     }
-    const output = app.nodeOutputs?.[originId];
-    if (output) {
-      const raw = output.text ?? output.string ?? output.STRING;
-      const value = Array.isArray(raw) ? raw[0] : raw;
-      if (typeof value === "string") return value;
-    }
-    return null;
+    // 4) 最后退回执行结果里的纯文本输出
+    return readOutputValue(["text", "string", "STRING"]);
   };
 
   // 和 openImport 走同一个解析器；区别是这里按「当前画布」等比缩放，不反过来改画布尺寸
   const applyLayoutText = (text) => {
     const parsed = parseLayoutText(text);
-    if (parsed.error) return false;
+    if (parsed.error) {
+      console.warn("[MOSS YXBOX] 布局提示词导入失败：", parsed.error);
+      return false;
+    }
     if (parsed.kind === "caption") {
-      // 上游换成普通自然语言提示词：只留整体描述，把上一份 JSON 的框清掉
+      // 上游换成普通自然语言提示词：只留整体描述，把上一份 JSON 的框清掉；
+      // 前后缀也一并清空，免得留下上一份 JSON 的尾巴
+      setSideProse("", "");
       clearBoxesForCaption(parsed.caption);
       return true;
     }
@@ -5536,6 +7590,8 @@ function setup(node) {
       lock: emptyLocks(),
     }));
     S.selected.clear();
+    setSideProse(parsed.prefix, parsed.suffix);
+    applySideHeights();
     refreshRows();
     layout();
     commit();
@@ -5546,11 +7602,14 @@ function setup(node) {
 
   // 上游文本被清空 → 画布回到「什么都没画」的初始状态（框、选择、描述一起清掉）
   const clearFromSocket = () => {
-    if (!S.boxes.length && !String(captionWidget()?.value ?? "").trim()) return;
+    if (!S.boxes.length && !String(captionWidget()?.value ?? "").trim()
+      && !String(state.prefix || "").trim() && !String(state.suffix || "").trim()) return;
     S.boxes = [];
     S.selected.clear();
     const target = captionWidget();
     if (target) target.value = "";
+    // 上游文本被清空：前置 / 后置也一起清掉，不留下上一份内容的残渣
+    setSideProse("", "");
     refreshRows();
     layout();
     commit();
@@ -5571,7 +7630,8 @@ function setup(node) {
       return;
     }
     const text = upstreamLayoutText();
-    if (text == null) return;    if (text === lastLayoutText) {
+    if (text == null) return;
+    if (text === lastLayoutText) {
       // 上一次没导入成功就过一会儿再试，成功了就不重复干活
       if (lastLayoutOk || Date.now() - lastLayoutTry < 1200) return;
     }
@@ -5635,11 +7695,17 @@ function setup(node) {
     if (!withImages) {
       for (const bg of canvas.bgs || []) delete bg.url;
     }
+    // 原图那一行是「导入原图」接口进来的，预设里不存（换台机器/换图会过期）
+    canvas.bgs = (canvas.bgs || []).filter((bg) => bg.kind !== SOURCE_KIND);
     return { widgets, canvas, desc: readCaption() };
   };
   const applyPreset = async (preset, status) => {
     if (!preset) return;
     const data = preset.data || {};
+    // 先把「画布尺寸来源」的选项按当前接进来的图重新列一遍：
+    // 预设里存的那一档在当前节点不存在时，不能静默被改成「自定义尺寸」。
+    normalizeSizeMode();
+    syncSizeModeOptions();
     for (const [name, value] of Object.entries(data.widgets || {})) {
       const target = widget(name);
       if (!target) continue;
@@ -5669,8 +7735,6 @@ function setup(node) {
         bg.natH = image.naturalHeight || image.height || 0;
       }
     }
-    S.width = clampSize(numeric(wWidth, S.width));
-    S.height = clampSize(numeric(wHeight, S.height));
     refreshRows();
     refreshInfo();
     layout();
@@ -5743,7 +7807,7 @@ function setup(node) {
         check.type = "checkbox";
         check.checked = false;
         checkRow.appendChild(check);
-        checkRow.appendChild(el("span", null, "同时保存背景图的文件名与路径（下次加载会自动找回图片，文件被移动则只提示加载失败）"));
+        checkRow.appendChild(el("span", null, "同时保存背景图的图片地址（下次加载按地址把图补回那一行；文件被移走或删掉时只提示、不失败）"));
         card.appendChild(checkRow);
 
         const folderRow = el("div", "yx-form");
@@ -6263,6 +8327,7 @@ function setup(node) {
   state.applyCanvasSize = applyCanvasSize;
   // 布局探针：只给自测脚本读数字用，不参与界面
   state.layoutProbe = {
+    WIDGET_LABELS,
     listNeeded, listBaseline, listCap, listHeight,
     baseTotalHeight, nodeBaseline, domDesiredHeight,
     stageBaseHeight, stageExtraHeight, stageHeight,
@@ -6273,9 +8338,34 @@ function setup(node) {
     bgRowsInput: state.bgRowsInput, boxRowsInput: state.boxRowsInput,
     stageHInput: state.stageHInput, applyStageHeightInput,
     wWidth, wHeight, wLength, wMult,
-    tableBar, hideSelBtn, showSelBtn, toolsRow, multiBtn, headBar: head, stageHField,
-    drawTag, itemColor,
+    tableBar, hideSelBtn, showSelBtn, toolsRow, multiBtn, allBoxesBtn,
+    bgInvertBtn, boxInvertBtn,
+    headBar: head, stageHField, topBar,
+    pngBtn, pngPicker, pngMetaTexts, mossCandidates, applyPngCandidate, canvasDataText, showToast,
+    runImageImport, bestPromptText, looksLikePrompt, syncImageImport,
+    switchBtn, syncLayoutSwitch, rememberCandidates, persistableImageUrl, fetchPngBuffer,
+    upstreamImageFilesOf, pngSizeOf, stampOfUrl, pngCandidates: () => state.pngCandidates,
+    canvasSize: () => ({ width: S.width, height: S.height }),
+    coordIsDraft, yShown, yFromShown, setCoordMode, syncCoordButtons, axesBtn, draftCoordBtn,
+    sourceBg, isSourceBg, ensureSourceBg, dropSourceBg, sizeModeOptions, syncSizeModeOptions,
+    modeBgNat, setSizeMode, normalizeSizeMode,
+    prefixArea, suffixArea, setSideProse, syncSideValues, splitJsonOutside, composeFinalPrompt,
+    proseTotalHeight, applySideHeights, scheduleSideCommit, proseBox, proseArea,
+    diagBtn, diagColor, hDivBtn, vDivBtn, hDivColor, vDivColor,
+    scheduleSyncBackgrounds, syncBgBusy: () => !!state.bgSyncBusy,
+    scheduleRestoredImageRefresh,
+    bgList: () => S.bgs,
+    bgInfo, bgTitleNote, dropBackground, useAsCanvas,
+    boxList: () => S.boxes,
+    proseText: () => String(proseWidget?.value ?? ""),
+    drawTag, itemColor, drawAxes, drawDiagonals,
     nextLabelNo, fillMissingNos,
+    syncLinkedCanvas, linkedInt, inputSlot, widgetInt, parseSizeText,
+    LINK_WIDTH_NAMES, LINK_HEIGHT_NAMES, LINK_LENGTH_NAMES,
+    fillBgIntoCanvas, followImageCanvas, applyModeSize, applyCanvasSize, applyLayoutText, applyPngCandidate,
+    openPngChooser, showToast, paint, closeMenu, buildMenu,
+    syncSizeWidgets, LABEL_TO_TYPE,
+    upstreamLayoutText, wMode,
   };
   state.canvasStep = canvasStep;
   state.snapCanvasValue = snapCanvasValue;

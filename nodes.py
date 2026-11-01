@@ -34,7 +34,10 @@ TYPE_ALIASES = {
 MODE_CUSTOM = "自定义尺寸"
 MODE_IMAGE = "按图片原始尺寸"
 MODE_SCALED = "按缩放规则计算"
-MODE_LIST = [MODE_CUSTOM, MODE_IMAGE, MODE_SCALED]
+# 新的两档（前端按实际存在的原图 / 背景图动态填选项；这里列出来只是为了旧数据也能读）
+MODE_SOURCE = "按导入原图的原始尺寸"
+MODE_BG1 = "按背景图1的原始尺寸"
+MODE_LIST = [MODE_CUSTOM, MODE_IMAGE, MODE_SCALED, MODE_SOURCE, MODE_BG1]
 
 ASPECT_LIST = ["保持原图", "自定义", "1:1", "5:4", "4:3", "3:2", "16:9", "2:1", "21:9",
                "4:5", "3:4", "2:3", "9:16", "1:2"]
@@ -45,8 +48,11 @@ BASIS_LIST = ["长边", "短边", "宽度", "高度", "总像素(千像素)", "�
 FIT_LIST = ["填充", "留白", "裁切", "锁比例"]
 MULT_LIST = ["16", "8", "32", "64", "128", "256", "无"]
 
-# 背景图最多支持 8 张：背景图、背景图2 … 背景图8
-BG_INPUTS = ["背景图1"] + ["背景图{}".format(i) for i in range(2, 9)]
+# 背景图输入口上限：背景图1 … 背景图64
+# 前端只会保留「已经接上线的 + 下一个空位」，所以声明得再多也不会把节点撑长；
+# 用户接满一个，前端就会自动补出下一个。
+BG_MAX = 64
+BG_INPUTS = ["背景图{}".format(i) for i in range(1, BG_MAX + 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +135,7 @@ def _rect_of(item, default_w=0.0, default_h=0.0):
 
 
 def _parse_canvas(raw):
-    """把隐藏参数「画布数据」解析成 (boxes, bgs)。
+    """把隐藏参数「画布数据」解析成 (boxes, bgs, 宽, 高, 前置提示词, 后置提示词)。
 
     坐标一律是像素、左上角原点（前端负责把它和左下角原点的显示坐标互换）。
     bgs 是背景图列表，顺序与输入顺序一致（背景图、背景图2…）。
@@ -174,6 +180,8 @@ def _parse_canvas(raw):
                 continue
             x, y, w, h = rect
             bgs.append({
+                # kind == "source"：这一行是「导入原图」接口进来的图，不占背景图 slot
+                "kind": "source" if str(item.get("kind") or "").strip() == "source" else "bg",
                 "slot": int(item["slot"]) if isinstance(item.get("slot"), int) else index,
                 "x": x, "y": y, "w": w, "h": h,
                 "hidden": bool(item.get("hidden")),
@@ -186,7 +194,25 @@ def _parse_canvas(raw):
         rect = _rect_of(data["bg"], 0.0, 0.0)
         bgs = [{"slot": 0, "x": rect[0], "y": rect[1], "w": rect[2], "h": rect[3],
                 "hidden": bool(data["bg"].get("hidden"))}] if rect else []
-    return boxes, bgs
+
+    # 画布宽高：前端「画布数据」里记的就是画布区实际显示的尺寸。
+    # 老工作流（1.0.4 之前）没有这两个字段，返回 0 让调用方自己按参数算。
+    canvas_w = canvas_h = 0
+    for key_w, key_h in (("width", "height"), ("canvas_width", "canvas_height")):
+        try:
+            cw = int(round(float(data.get(key_w) or 0)))
+            ch = int(round(float(data.get(key_h) or 0)))
+        except Exception:
+            continue
+        if 16 <= cw <= 16384 and 16 <= ch <= 16384:
+            canvas_w, canvas_h = cw, ch
+            break
+    # 布局 JSON 之外的前后提示词：拼在最终 layout_prompt 的前后
+    prefix = data.get("prefix")
+    suffix = data.get("suffix")
+    prefix = prefix.strip() if isinstance(prefix, str) else ""
+    suffix = suffix.strip() if isinstance(suffix, str) else ""
+    return boxes, bgs, canvas_w, canvas_h, prefix, suffix
 
 
 def _boxes_to_regions(boxes, canvas_w, canvas_h):
@@ -323,34 +349,36 @@ def _fit_image(image, target_w, target_h, fit):
     return canvas
 
 
-def _bg_layers(bg_arrays, bg_entries):
+def _bg_layers(bg_arrays, bg_entries, source_array=None):
     """把「列表顺序 + slot 编号」配成图层列表（列表越靠上 = 越上层）。
 
-    bg_entries 每项形如 {"slot": 0..7, "x","y","w","h","hidden"}；
+    bg_entries 每项形如 {"slot": 0..63, "kind": "bg"/"source", "x","y","w","h","hidden"}；
     slot 决定用哪一张接进来的图，列表顺序决定谁压在谁上面。
+    kind == "source" 的那一项是「导入原图」接口进来的图，不占 slot。
     """
     layers = []
     for index, entry in enumerate(bg_entries or []):
         if not isinstance(entry, dict) or entry.get("hidden"):
             continue
-        slot = entry.get("slot", index)
-        if not isinstance(slot, int) or slot < 0 or slot >= len(bg_arrays):
-            slot = index
-        if slot < 0 or slot >= len(bg_arrays):
-            continue
-        array = bg_arrays[slot]
+        if entry.get("kind") == "source":
+            array = source_array
+        else:
+            slot = entry.get("slot", index)
+            if not isinstance(slot, int) or slot < 0 or slot >= len(bg_arrays):
+                slot = index
+            array = bg_arrays[slot] if 0 <= slot < len(bg_arrays) else None
         if array is None:
             continue
         layers.append((index, array, entry))
     return layers
 
 
-def _compose_backgrounds(bg_arrays, bg_entries, width, height, fit):
+def _compose_backgrounds(bg_arrays, bg_entries, width, height, fit, source_array=None):
     """把所有背景图按各自矩形合成到画布大小的底图上（列表越靠上 = 越上层）。
 
     返回 0~1 的 numpy 图；没有任何背景图时返回 None。
     """
-    layers = _bg_layers(bg_arrays, bg_entries)
+    layers = _bg_layers(bg_arrays, bg_entries, source_array)
     if not layers:
         return None
 
@@ -501,7 +529,7 @@ def _compile_layout_local(prompt, elements, boxes, width, height):
 
 
 def _layout_draft(caption, regions, width, height):
-    """未编译的草稿 JSON：画布宽高 + 第一象限（左下角原点）像素坐标，缩进排版方便人读。"""
+    """未编译的草稿 JSON：和官方草稿格式一致（画布左上角原点、y 向下、`xyxy`），缩进排版方便人读。"""
     items = []
     for region in regions:
         kind = str(region.get("type") or "obj")
@@ -521,16 +549,16 @@ def _layout_draft(caption, regions, width, height):
         ]
         palette = [c.upper() for c in (region.get("palette") or []) if isinstance(c, str) and c][:5]
         if palette:
-            item["color_palette"] = palette
+            item["palette"] = palette
         items.append(item)
 
     draft = {
-        "summary": {"caption": (caption or "").strip()},
-        "canvas": {"width": int(width), "height": int(height)},
-        "items": items,
+        "width": int(width),
+        "height": int(height),
         "bbox_coord_space": "abs",
         "bbox_format": "xyxy",
-        "bbox_origin": "bottom-left",
+        "summary": {"caption": (caption or "").strip()},
+        "items": items,
     }
     text = json.dumps(draft, ensure_ascii=False, indent=2)
     # json 默认会把 [1,2,3,4] / ["#a","#b"] 拆成很多行，读起来反而乱；把这类扁平数组压回一行
@@ -651,9 +679,12 @@ class MOSS_YXBOX:
                     "default": MODE_CUSTOM,
                     "tooltip": "画布（最终出图）的尺寸从哪里取：\n"
                                "· 自定义尺寸 —— 用下面的「画布宽 / 画布高」，跟背景图无关。\n"
-                               "· 按图片原始尺寸 —— 等于第一张背景图的原始像素尺寸（按取整倍数取最近值）。\n"
                                "· 按缩放规则计算 —— 用「画布比例 + 画布缩放基准 + 画布缩放长度」算出一个固定尺寸，"
-                               "与你接了几张图无关。",
+                               "与你接了几张图无关。\n"
+                               "· 按导入原图的原始尺寸 —— 等于「导入原图」那张图的像素尺寸，精确到像素、不取整"
+                               "（列表里有「原图」那一行才出现这一档）。\n"
+                               "· 按背景图N的原始尺寸 —— 等于第 N 张背景图的原始像素尺寸（按取整倍数取最近值；"
+                               "只有真接上并拿到尺寸的那张才会出现在列表里）。",
                 }),
                 "画布宽": ("INT", {
                     "default": 1536, "min": 16, "max": 16384, "step": 16,
@@ -676,11 +707,11 @@ class MOSS_YXBOX:
                 }),
                 "比例宽": ("INT", {
                     "default": 1, "min": 1, "max": 10000, "step": 1,
-                    "tooltip": "只在「画布比例＝自定义」时生效：比例的宽边数值，例如 16（表示 16:比例高）。",
+                    "tooltip": "只在「画布尺寸来源＝按缩放规则计算」并且「画布比例＝自定义」时生效：比例的宽边数值，例如 16（表示 16:比例高）。",
                 }),
                 "比例高": ("INT", {
                     "default": 1, "min": 1, "max": 10000, "step": 1,
-                    "tooltip": "只在「画布比例＝自定义」时生效：比例的高边数值，例如 9（表示 比例宽:9）。",
+                    "tooltip": "只在「画布尺寸来源＝按缩放规则计算」并且「画布比例＝自定义」时生效：比例的高边数值，例如 9（表示 比例宽:9）。",
                 }),
                 "画布缩放基准": (BASIS_LIST, {
                     "default": "长边",
@@ -689,7 +720,8 @@ class MOSS_YXBOX:
                                "· 长边 / 短边 —— 较长或较短的那条边等于该长度。\n"
                                "· 宽度 / 高度 —— 指定那条边等于该长度。\n"
                                "· 总像素(千像素) —— 宽 × 高 ≈ 该数值 × 1000。\n"
-                               "· 不缩放 —— 忽略长度，直接按比例给一个 1024 基准的尺寸。",
+                               "· 不缩放 —— 忽略「画布缩放长度」和比例，直接用第一张背景图的原始尺寸"
+                               "（仍按取整倍数取整）；没接背景图时退回「画布宽 / 画布高」。",
                 }),
                 "画布缩放长度": ("INT", {
                     "default": 1536, "min": 4, "max": 16384, "step": 1,
@@ -708,6 +740,7 @@ class MOSS_YXBOX:
                     "default": "16",
                     "tooltip": "控制画布宽高（＝最终生成图片的宽高）按哪个倍数取整。\n"
                                "· MOSS-Image 要求画布宽高是 16 的倍数，默认 16，除非你有特别理由，否则别改。\n"
+                               "· 「按缩放规则计算」「按背景图N的原始尺寸」算出来的画布，也按这个倍数取整。\n"
                                "· 它决定「画布宽 / 画布高 / 画布缩放长度」三个数字框两侧箭头的步长："
                                "选 16 时点一下 ±16，选 32 时 ±32；选「无」时不取整，箭头步长退回 1。\n"
                                "· 这三个框里手输的数也会自动吸附到该倍数。\n"
@@ -720,6 +753,14 @@ class MOSS_YXBOX:
                 }),
             },
             "optional": {
+                "导入原图": ("IMAGE", {
+                    "tooltip": "接一张 PNG 原图（一般来自「加载图像」节点）。\n"
+                               "前端会读这张图里存的工作流信息，把生成它用的布局提示词自动导入到画布，\n"
+                               "同时把这张图铺成列表里的「原图」那一行（不占背景图编号、也不抢背景图输入口），\n"
+                               "画布尺寸来源切成「按导入原图的原始尺寸」（画布＝这张图的像素宽高，精确到像素、不取整）。\n"
+                               "如果生成这张图用的是自然语言提示词（没有 bbox），只把那段提示词放进「整体描述」。\n"
+                               "后端只做透传，不影响编译结果。",
+                }),
                 "布局提示词输入": ("STRING", {
                     "forceInput": True,
                     "tooltip": "接一段布局提示词（文本节点或别处输出的 STRING）。\n"
@@ -729,23 +770,23 @@ class MOSS_YXBOX:
                                "是编译格式（0–1000 网格）则按比例换算到当前画布。",
                 }),
                 "背景图1": ("IMAGE", {
-                    "tooltip": "第一张背景图，接入后自动铺到画布、列表底部多一行；永远在所有框的下面。",
+                    "tooltip": "第一张背景图：接上就进列表、永远在所有绘制框下面；只有「画布尺寸来源」选到它时，画布才跟着它的原始尺寸走（按缩放规则计算 + 画布比例选「保持原图」时，用它的宽高比来算画布）。",
                 }),
                 "背景图2": ("IMAGE", {"tooltip": "第二张背景图，盖在背景图1 上面。"}),
-                "背景图3": ("IMAGE", {"tooltip": "第三张背景图，盖在背景图2 上面。"}),
-                "背景图4": ("IMAGE", {"tooltip": "第四张背景图，盖在背景图3 上面。"}),
-                "背景图5": ("IMAGE", {"tooltip": "第五张背景图，盖在背景图4 上面。"}),
-                "背景图6": ("IMAGE", {"tooltip": "第六张背景图，盖在背景图5 上面。"}),
-                "背景图7": ("IMAGE", {"tooltip": "第七张背景图，盖在背景图6 上面。"}),
-                "背景图8": ("IMAGE", {"tooltip": "第八张背景图，盖在背景图7 上面。"}),
+                # 背景图3 … 背景图64：前端用到第几张就自动连出第几张，没接线的会自动被裁掉
+                **{
+                    name: ("IMAGE", {"tooltip": "第{}张背景图，盖在{} 上面。".format(index, BG_INPUTS[index - 2])})
+                    for index, name in enumerate(BG_INPUTS, start=1) if index >= 3
+                },
             },
         }
 
     @classmethod
-    def IS_CHANGED(cls, 整体描述="", 画布数据="{}", 布局提示词输入="", **kwargs):
+    def IS_CHANGED(cls, 整体描述="", 画布数据="{}", 布局提示词输入="", 导入原图=None, **kwargs):
         payload = json.dumps([整体描述, 画布数据, 布局提示词输入], ensure_ascii=False, sort_keys=True)
-        for name in BG_INPUTS:
-            image = kwargs.get(name)
+        images = [(name, kwargs.get(name)) for name in BG_INPUTS]
+        images.append(("导入原图", 导入原图))
+        for name, image in images:
             if image is None:
                 continue
             try:
@@ -758,12 +799,15 @@ class MOSS_YXBOX:
     def run(self, 整体描述="", 画布尺寸来源=MODE_CUSTOM, 画布宽=1536, 画布高=1536,
             画布比例="自定义", 比例宽=1, 比例高=1, 画布缩放基准="长边", 画布缩放长度=1536,
             背景图填充方式="锁比例", 画布宽高取整倍数="16", 画布数据="{}",
-            布局提示词输入="",
-            背景图1=None, 背景图2=None, 背景图3=None, 背景图4=None,
-            背景图5=None, 背景图6=None, 背景图7=None, 背景图8=None):
-        inputs = [背景图1, 背景图2, 背景图3, 背景图4, 背景图5, 背景图6, 背景图7, 背景图8]
+            布局提示词输入="", 导入原图=None, **kwargs):
+        # 背景图输入口最多 64 个，用 kwargs 取，避免签名写到 64 行；
+        # 老工作流只接了前几个时，其余自然是 None。
+        inputs = [kwargs.get(name) for name in BG_INPUTS]
+        inputs.extend([None] * (BG_MAX - len(inputs)))
         bg_arrays = [_bg_array(image) for image in inputs]
-        boxes, bg_entries = _parse_canvas(画布数据)
+        # 「导入原图」接口进来的图也参与出图合成：列表里那一行标着「原图」
+        source_array = _bg_array(导入原图)
+        boxes, bg_entries, data_w, data_h, prefix_text, suffix_text = _parse_canvas(画布数据)
 
         first = next((array for array in bg_arrays if array is not None), None)
         bg_w = int(first.shape[1]) if first is not None else 0
@@ -774,6 +818,11 @@ class MOSS_YXBOX:
             画布尺寸来源, 画布宽, 画布高, bg_w, bg_h,
             画布比例, 比例宽, 比例高, 画布缩放基准, 画布缩放长度, multiple,
         )
+        # 画布区实际显示的尺寸说了算：不管尺寸是怎么来的（导入原图、接背景图、
+        # 按缩放规则、手填参数），用户看到的那个画布就是出图尺寸。
+        # 只有这样，输出宽/高、预览图、布局提示词、草稿 JSON 才和画布上的构图对得上。
+        if data_w > 0 and data_h > 0:
+            width, height = data_w, data_h
 
         # 列表里点「眼睛」隐藏的框：不画进预览、不参与布局提示词编译
         visible_boxes = [box for box in boxes if not box.get("hidden")]
@@ -787,8 +836,13 @@ class MOSS_YXBOX:
         regions = _boxes_to_regions(emit_boxes, width, height)
         elements = _build_elements(regions) if regions else []
         layout_prompt = _compile_layout(整体描述, elements, emit_boxes, width, height)
+        # 前置 / 后置提示词：布局 JSON 区间之外的文字，原样拼在前后（空段跳过）
+        if prefix_text:
+            layout_prompt = prefix_text + "\n" + layout_prompt
+        if suffix_text:
+            layout_prompt = layout_prompt + "\n" + suffix_text
 
-        background = _compose_backgrounds(bg_arrays, bg_entries, width, height, 背景图填充方式)
+        background = _compose_backgrounds(bg_arrays, bg_entries, width, height, 背景图填充方式, source_array)
         preview = _preview(preview_regions, width, height, background)
 
         ui = {"dims": [width, height]}
