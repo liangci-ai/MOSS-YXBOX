@@ -55,6 +55,14 @@ const MODE_SOURCE = "按导入原图的原始尺寸";
 const MODE_IMAGE_OLD = "按图片原始尺寸";
 const MODE_BG_RE = /^按背景图(\d+)的原始尺寸$/;
 
+// 画布比例：一张图都没有时的兜底项 / 「按原图」/ 「按背景图N」（N = 输入口序号）
+const ASPECT_AUTO = "按导入的原图或接入的背景图比例";
+const ASPECT_SOURCE = "按原图";
+const ASPECT_LEGACY = "保持原图";
+const ASPECT_BG_RE = /^按背景图(\d+)$/;
+const ASPECT_FIXED = ["自定义", "1:1", "5:4", "4:3", "3:2", "16:9", "2:1", "21:9",
+  "4:5", "3:4", "2:3", "9:16", "1:2"];
+
 const emptyLocks = (fields = FIELDS) => {
   const out = {};
   for (const key of fields) out[key] = false;
@@ -2338,16 +2346,91 @@ function setup(node) {
   // 「第一张背景图」只算真正的背景图，原图那一行不算（它有自己的尺寸来源开关）
   const activeBg = () => S.bgs.find((bg) => bg && bg.image && !isSourceBg(bg)) || null;
 
-  const aspectRatio = () => {
-    const aspect = String(wAspect?.value ?? "保持原图");
-    if (aspect === "保持原图") {
-      const bg = activeBg();
-      const iw = bg?.natW || 0;
-      const ih = bg?.natH || 0;
-      return iw > 0 && ih > 0 ? iw / ih : S.width / Math.max(1, S.height);
+  // 当前画布比例指向的那张图（按原图 / 按背景图N / 自动项）；固定比例返回 null
+  function aspectBgOf(aspect) {
+    const text = String(aspect ?? "");
+    const sized = (item) => !!item && Number(item.natW) > 0 && Number(item.natH) > 0;
+    if (text === ASPECT_SOURCE) {
+      return sized(sourceBg()) ? sourceBg() : null;
     }
+    const hit = ASPECT_BG_RE.exec(text);
+    if (hit) {
+      const slot = Number(hit[1]) - 1;
+      const bg = S.bgs.find((item) => item && item.kind !== SOURCE_KIND && Number(item.slot) === slot);
+      return sized(bg) ? bg : null;
+    }
+    if (text === ASPECT_AUTO || text === ASPECT_LEGACY) {
+      const source = sourceBg();
+      if (sized(source)) return source;
+      return activeBg();
+    }
+    return null;
+  }
+
+  // 画布比例下拉的可选项：原图 + 每个已接上的背景图；一张图都没有时只留「自动项」
+  function aspectOptions() {
+    const list = [];
+    const known = (item) => !!item && (Number(item.natW) > 0 || Number(item.natH) > 0
+      || !!item.url || !!item.image);
+    const source = sourceBg();
+    if (known(source)) list.push(ASPECT_SOURCE);
+    const entries = S.bgs
+      .filter((bg) => bg && bg.kind !== SOURCE_KIND && Number(bg.slot) >= 0 && known(bg))
+      .slice()
+      .sort((a, b) => Number(a.slot) - Number(b.slot));
+    for (const bg of entries) list.push(`按背景图${Number(bg.slot) + 1}`);
+    if (!list.length) list.push(ASPECT_AUTO);
+    for (const fixed of ASPECT_FIXED) list.push(fixed);
+    return list;
+  }
+
+  // 选项跟着图变：
+  //   没有图 → 只有「按导入的原图或接入的背景图比例」
+  //   接上第一张图 / 导入原图 → 自动项换成「按背景图1」「按原图」等
+  //   已经选了某一张 → 接新图不改它，只是下拉里多出「按背景图N」
+  //   选中的那张图断线了 → 退到第一张还能用的图，都没有就退回自动项
+  function syncAspectOptions() {
+    if (!wAspect) return;
+    const list = aspectOptions();
+    const key = list.join("|");
+    const imageOptions = list.filter((v) => v === ASPECT_SOURCE || ASPECT_BG_RE.test(v));
+    const current = String(wAspect.value ?? "");
+    if (key !== state.aspectKey) {
+      state.aspectKey = key;
+      try {
+        if (wAspect.options) {
+          wAspect.options.values = list;
+          wAspect.options.max = Math.max(0, list.length - 1);
+        }
+      } catch (_error) {
+        // 框架偶尔不允许改 options，忽略（下一张图接入时还会再试一次）
+      }
+    }
+    if (!list.includes(String(wAspect.value ?? ""))) {
+      wAspect.value = imageOptions[0] || ASPECT_AUTO;
+    }
+    try {
+      node.setDirtyCanvas?.(true, true);
+      node.graph?.setDirtyCanvas?.(true, true);
+      app?.canvas?.setDirty?.((true), true);
+    } catch (_error) {
+      // 忽略
+    }
+  }
+
+  const aspectRatio = () => {
+    const aspect = String(wAspect?.value ?? ASPECT_AUTO);
     if (aspect === "自定义") {
       return Math.max(1, numeric(wPropW, 1)) / Math.max(1, numeric(wPropH, 1));
+    }
+    const bg = aspectBgOf(aspect);
+    const iw = Number(bg?.natW) || 0;
+    const ih = Number(bg?.natH) || 0;
+    if (iw > 0 && ih > 0) return iw / ih;
+    // 还没有图（或那张图断开了）：先沿用画布当前比例，等图接上来再按它重算
+    if (ASPECT_BG_RE.test(aspect) || aspect === ASPECT_SOURCE
+      || aspect === ASPECT_AUTO || aspect === ASPECT_LEGACY) {
+      return S.width / Math.max(1, S.height);
     }
     const parts = String(aspect).split(":");
     const a = parseInt(parts[0], 10);
@@ -2642,6 +2725,7 @@ function setup(node) {
   };
 
   const refreshInfo = () => {
+    syncAspectOptions();
     canvasInfo.innerHTML = `画布 <b>${Math.round(S.width)}×${Math.round(S.height)}</b>`;
     const rows = S.bgs.filter(Boolean);
     const count = rows.filter((bg) => bg.kind !== SOURCE_KIND).length;
@@ -2653,9 +2737,16 @@ function setup(node) {
     const w = clampSize(width);
     const h = clampSize(height);
     if (w === S.width && h === S.height) return false;
-    if (rescale && S.width > 0 && S.height > 0) {
-      const rx = w / S.width;
-      const ry = h / S.height;
+    const oldW = S.width;
+    const oldH = S.height;
+    const rx = oldW > 0 ? w / oldW : 1;
+    const ry = oldH > 0 ? h / oldH : 1;
+    // 画布长宽比没变：整组内容按同一个比例缩放（背景图也不会被拉变形）
+    const sameRatio = Math.abs(rx - ry) <= Math.max(Math.abs(rx), 1e-9) * 1e-6;
+    // 先写画布尺寸：下面按填充方式重贴背景图时要用新画布算矩形
+    S.width = w;
+    S.height = h;
+    if (rescale && oldW > 0 && oldH > 0) {
       for (const box of S.boxes) {
         box.x *= rx;
         box.y *= ry;
@@ -2670,16 +2761,18 @@ function setup(node) {
           bg.y = 0;
           bg.w = w;
           bg.h = h;
-          continue;
+        } else if (sameRatio) {
+          // 比例没变：位置和尺寸一起等比缩放，画面内容不变形
+          bg.x *= rx;
+          bg.y *= ry;
+          bg.w *= rx;
+          bg.h *= ry;
+        } else {
+          // 比例变了：旧矩形已经不匹配新画布，按「背景图填充方式」重新贴一次
+          fitBgToCanvas(bg);
         }
-        bg.x *= rx;
-        bg.y *= ry;
-        bg.w *= rx;
-        bg.h *= ry;
       }
     }
-    S.width = w;
-    S.height = h;
     // 立刻把新尺寸写进「画布数据」，别等下一次编辑：
     // 用户可能改完尺寸直接点运行，队列表里拿的是控件当前值。
     if (wData) wData.value = serialize();
@@ -2738,6 +2831,40 @@ function setup(node) {
   };
 
   const clampItem = (item) => (item.isBg ? clampBg(item) : clampBox(item));
+
+  // 背景图按「背景图填充方式」算出的目标矩形：
+  //   填充 = 画布本身（拉伸铺满）、裁切 = 等比放大到盖住画布、锁比例 / 留白 = 等比缩小到放进画布
+  const bgFitRect = (bg) => {
+    const natW = Number(bg?.natW) || 0;
+    const natH = Number(bg?.natH) || 0;
+    if (!natW || !natH) return { w: S.width, h: S.height };
+    const fit = String(wFit?.value ?? "锁比例");
+    if (fit === "填充") return { w: S.width, h: S.height };
+    const scale = fit === "裁切"
+      ? Math.max(S.width / natW, S.height / natH)
+      : Math.min(S.width / natW, S.height / natH);
+    return { w: Math.max(1, Math.round(natW * scale)), h: Math.max(1, Math.round(natH * scale)) };
+  };
+
+  // 把一张背景图重新贴到当前画布上：按填充方式给矩形、居中，锁住的字段不动
+  const fitBgToCanvas = (bg) => {
+    if (!bg) return false;
+    const rect = bgFitRect(bg);
+    const natW = Number(bg.natW) || 0;
+    const natH = Number(bg.natH) || 0;
+    if (!bg.lock?.w) bg.w = rect.w;
+    if (!bg.lock?.h) bg.h = rect.h;
+    // 只锁住一边时，另一边跟着这一边走，别把图片比例弄坏
+    if (natW > 0 && natH > 0) {
+      if (bg.lock?.w && !bg.lock?.h) bg.h = Math.max(1, Math.round(bg.w * natH / natW));
+      else if (bg.lock?.h && !bg.lock?.w) bg.w = Math.max(1, Math.round(bg.h * natW / natH));
+    }
+    if (!bg.lock?.x) bg.x = Math.round((S.width - bg.w) / 2);
+    if (!bg.lock?.y) bg.y = Math.round((S.height - bg.h) / 2);
+    bg.lockedCanvas = false;
+    clampBg(bg);
+    return true;
+  };
 
   // ---------------------------------------------------------------- rows
   // 整体锁：一次把这一行所有字段全部锁上 / 全部解开（任何一项还锁着就显示成锁住）
@@ -5262,7 +5389,7 @@ function setup(node) {
     return !!item && item.kind === SOURCE_KIND;
   }
 
-  function ensureSourceBg(atTop = false) {
+  function ensureSourceBg(atTop = true) {
     let bg = sourceBg();
     if (bg) return bg;
     bg = {
@@ -5282,7 +5409,8 @@ function setup(node) {
       label: SOURCE_LABEL,
       __no: 0,
     };
-    // 默认放在列表最下面：它是底图，别的背景图应该盖在它上面
+    // 默认和新接进来的背景图一样放在列表最上面（画布最上层）：
+    // 之后接的背景图会再叠在它上面；恢复工作流时按存档顺序 push，位置照旧
     if (atTop) S.bgs.unshift(bg);
     else S.bgs.push(bg);
     return bg;
@@ -5371,6 +5499,7 @@ function setup(node) {
   function setSizeMode(mode) {
     if (!wMode) return false;
     syncSizeModeOptions();
+    syncAspectOptions();
     wMode.value = String(mode || MODE_CUSTOM);
     applyModeSize(false);
     refreshInfo();
@@ -5448,8 +5577,16 @@ function setup(node) {
   // 只有当前来源正好选中这张图时画布才跟着它走（别的图接入不改画布）。
   const followImageCanvas = (bg, first) => {
     if (!bg || !bg.natW || !bg.natH) return;
-    const picked = modeBgNat(String(wMode?.value ?? ""));
-    if (picked && picked.bg === bg) applyModeSize(false);
+    const mode = String(wMode?.value ?? MODE_CUSTOM);
+    const picked = modeBgNat(mode);
+    if (picked && picked.bg === bg) {
+      // 尺寸来源正指着这张图：画布先按它重算，再把图放进新画布（顺序反了图就会停在旧尺寸）
+      applyModeSize(false);
+    } else if (mode === MODE_SCALED && aspectBgOf(wAspect?.value) === bg) {
+      // 画布比例正指着这张图（自动项＝第一张接上的图 / 按背景图N / 按原图）：
+      // 这张图一到，画布就按它的比例重算一次，否则会一直停在接入前的比例上
+      applyModeSize(false);
+    }
     placeInitial(bg);
     refreshInfo();
   };
@@ -5684,6 +5821,7 @@ function setup(node) {
     fillMissingNos(S.bgs);
     normalizeSizeMode();
     syncSizeModeOptions();
+    syncAspectOptions();
     refreshRows();
     layout();
   };
@@ -6386,7 +6524,8 @@ function setup(node) {
   // 表现就是「莫名其妙还留着上一张图」）
   const persistableImageUrl = (url) => (/^(blob|data):/i.test(String(url || "")) ? "" : String(url || ""));
 
-  // 应用一份候选：先把这张图按原图尺寸铺成背景图1、画布切到「按图片原始尺寸」，再导入框/描述
+  // 应用一份候选：先把这张图铺成背景图列表里「原图」那一行（默认叠在最上层）、
+  // 画布切到「按导入原图的原始尺寸」（画布＝原图像素、不取整），再导入框/描述
   const applyPngCandidate = async (cand, imageUrl = "") => {
     if (imageUrl) {
       state.pngImageUrl = imageUrl;
@@ -6412,6 +6551,8 @@ function setup(node) {
       // 画布尺寸来源切成「按导入原图的原始尺寸」：画布＝原图像素尺寸（这一档不取整）
       syncSizeModeOptions();
       if (wMode) wMode.value = MODE_SOURCE;
+      syncAspectOptions();
+      if (wAspect) wAspect.value = ASPECT_SOURCE;
       if (bg.natW >= 8 && bg.natH >= 8) applyCanvasSize(Math.round(bg.natW), Math.round(bg.natH), true);
       // 原图铺满画布：画布与原图等大，所以就是 1:1 全画布
       fillBgIntoCanvas(bg);
@@ -7735,6 +7876,7 @@ function setup(node) {
         bg.natH = image.naturalHeight || image.height || 0;
       }
     }
+    syncAspectOptions();
     refreshRows();
     refreshInfo();
     layout();
@@ -8366,6 +8508,8 @@ function setup(node) {
     openPngChooser, showToast, paint, closeMenu, buildMenu,
     syncSizeWidgets, LABEL_TO_TYPE,
     upstreamLayoutText, wMode,
+    wAspect, aspectBgOf, aspectOptions, syncAspectOptions,
+    ASPECT_AUTO, ASPECT_SOURCE, ASPECT_LEGACY,
   };
   state.canvasStep = canvasStep;
   state.snapCanvasValue = snapCanvasValue;
