@@ -6121,18 +6121,23 @@ function setup(node) {
         const info = Array.isArray(group) ? group[0] : group;
         const url = imageURL(info);
         if (!url) return;
-        attachBackgroundByURL(slotIndex, url);
+        // 后端回传的是运行产物（临时拷件），文件名每次执行都会变：
+        // 只拿去给画布当底图，绝不能写回存档里的 url —— 写回去等于每轮都在改
+        // 「画布数据」，下游节点的缓存签名全会被撞掉（反推提示词节点就会每轮重跑）。
+        attachBackgroundByURL(slotIndex, url, /background_temp_|type=temp/i.test(url));
       });
     }
   };
 
-  const attachBackgroundByURL = async (slotIndex, url) => {
+  const attachBackgroundByURL = async (slotIndex, url, transient = false) => {
     const bg = ensureBgEntry(slotIndex);
     const image = await loadImage(url);
     if (!image) return;
     const first = !bg.image;
     bg.image = image;
-    bg.url = url;
+    // 运行产物（临时拷件）只用来更新画面，地址留在存档里不动：
+    // 写回去会让「画布数据」每轮都变，下游节点的缓存签名跟着全变
+    if (!transient) bg.url = url;
     bg.natW = image.naturalWidth || image.width || 0;
     bg.natH = image.naturalHeight || image.height || 0;
     if (first) placeInitial(bg);
@@ -7424,6 +7429,52 @@ function setup(node) {
   };
 
   // 在 fragment 里找最后一个 name 字段的字符串值（caption 可能有几千字符、还带真换行）
+  // 兜底时也要认「行数组」：很多反推规则把多行文字写成 "text":["A","B"]，
+  // 只认标量字符串的话这些项会一个字都取不到（然后就容易串到上一项去）。
+  const stringsInArray = (fragment, start) => {
+    const out = [];
+    let buffer = "";
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < fragment.length; i += 1) {
+      const ch = fragment[i];
+      if (!inString) {
+        if (ch === "]") break;
+        if (ch === '"') {
+          inString = true;
+          buffer = "";
+        }
+        continue;
+      }
+      if (escaped) {
+        buffer += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        out.push(unescapeJsonText(buffer));
+        inString = false;
+        continue;
+      }
+      buffer += ch;
+    }
+    return out;
+  };
+
+  // 片段里最后一个 "name":[...] 的行数组内容；没有就返回 null
+  const arrayTextAt = (fragment, name) => {
+    const re = new RegExp('"' + name + '"\\s*:\\s*\\[', "g");
+    let match;
+    let last = null;
+    while ((match = re.exec(fragment))) last = match;
+    if (!last) return null;
+    return stringsInArray(fragment, last.index + last[0].length);
+  };
+
   const lastJsonText = (fragment, name) => {
     const re = new RegExp('"' + name + '"\\s*:\\s*"', "g");
     let match;
@@ -7446,15 +7497,21 @@ function setup(node) {
     }
     if (!bboxes.length) return null;
     const items = bboxes.map((entry, i) => {
-      const head = src.slice(Math.max(0, entry.index - 4000), entry.index);
+      // 只看「上一个 bbox 之后」的这一段：把窗口再往前放，就会读到上一条的
+      // text / label，兜底出来的文字全串成上一项（这正是「一堆框文字重复」的由来）
+      const headStart = i > 0 ? bboxes[i - 1].index + 1 : 0;
+      const head = src.slice(Math.max(headStart, entry.index - 4000), entry.index);
       const tailEnd = i + 1 < bboxes.length
         ? bboxes[i + 1].index
         : Math.min(src.length, entry.index + 400);
       const tail = src.slice(entry.index, tailEnd);
       const pick = (name) => {
+        const arrayValue = arrayTextAt(head, name);
+        if (arrayValue && arrayValue.length) return arrayValue.join("\n");
         const headValue = lastJsonText(head, name);
         if (headValue) return headValue;
         const tailValues = collectStrings(tail, name);
+        // 这一项自己没写，就留空：绝不沿用上一项的（那是「串文字」的根源）
         return tailValues.length ? tailValues[0] : "";
       };
       return {
@@ -7998,6 +8055,10 @@ function setup(node) {
   let lastLayoutText = null;
   let lastLayoutOk = false;
   let lastLayoutTry = 0;
+  // 这一口「上一次看到的是不是真有内容」：只有「本来是文本、后来被清空」才清画布。
+  // 上游刚接上还没跑、或者上游节点报错没产出文本时读到的也是空串，
+  // 那时候绝不能把用户自己画的框清掉（否则一点运行画布就空了、输出也跟着空）。
+  let lastLayoutHadText = false;
   const syncLayoutSocket = () => {
     // 先清掉旧工作流留下的重复槽位，保证下面拿到的是真正接着线的那一个
     normalizeLayoutInputs();
@@ -8005,6 +8066,7 @@ function setup(node) {
     if (!slot || slot.link == null) {
       lastLayoutText = null;
       lastLayoutOk = false;
+      lastLayoutHadText = false;
       return;
     }
     const text = upstreamLayoutText();
@@ -8015,11 +8077,14 @@ function setup(node) {
     }
     lastLayoutTry = Date.now();
     if (!text.trim()) {
+      const wasText = lastLayoutHadText;
       lastLayoutText = text;
       lastLayoutOk = true;
-      clearFromSocket();
+      lastLayoutHadText = false;
+      if (wasText) clearFromSocket();
       return;
     }
+    lastLayoutHadText = true;
     lastLayoutText = text;
     lastLayoutOk = applyLayoutText(text);
   };

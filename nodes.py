@@ -414,6 +414,46 @@ def _compose_backgrounds(bg_arrays, bg_entries, width, height, fit, source_array
     return np.asarray(canvas).astype(np.float32) / 255.0
 
 
+# 画布数据里会变、但改了也不代表「用户动了画布」的字段：
+# 每次执行后 run() 都会把背景图另存成一个新的临时拷件，前端顺手把新地址写回存档，
+# 于是这串 JSON 每轮都不一样。要是把它一起算进 IS_CHANGED 的指纹，下游所有节点
+# （尤其是反推提示词节点）每轮都会因为「缓存签名变了」而重跑，固定种子也拦不住。
+_CANVAS_VOLATILE_KEYS = ("url", "background_images", "stamp", "temp")
+
+
+def _stable_canvas_text(raw):
+    """把画布数据里纯显示用的临时地址剔掉，只留真正影响出图的几何与文字。
+
+    返回「标准化后的字符串」：同内容不同临时地址 → 同一个字符串 → 同一个指纹。
+    解析不出来就原样返回（宁可多算一次，也不能让指纹退化）。
+    """
+    if not isinstance(raw, str):
+        return raw
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(data, dict):
+        return raw
+
+    def scrub(value):
+        if isinstance(value, dict):
+            return {
+                key: scrub(item)
+                for key, item in value.items()
+                if key not in _CANVAS_VOLATILE_KEYS
+            }
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        return value
+
+    try:
+        return json.dumps(scrub(data), ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return raw
+
+
+
 def _save_background(image):
     """把背景图存到 ComfyUI 的 temp 目录，供前端画布当底图显示。"""
     if image is None:
@@ -801,7 +841,7 @@ class MOSS_YXBOX:
 
     @classmethod
     def IS_CHANGED(cls, 整体描述="", 画布数据="{}", 布局提示词输入="", 导入原图=None, **kwargs):
-        payload = json.dumps([整体描述, 画布数据, 布局提示词输入], ensure_ascii=False, sort_keys=True)
+        payload = json.dumps([整体描述, _stable_canvas_text(画布数据), 布局提示词输入], ensure_ascii=False, sort_keys=True)
         images = [(name, kwargs.get(name)) for name in BG_INPUTS]
         images.append(("导入原图", 导入原图))
         for name, image in images:
