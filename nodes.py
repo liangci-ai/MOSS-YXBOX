@@ -519,6 +519,194 @@ def _norm_bbox(region):
     return [min(y0, y1), min(x0, x1), max(y0, y1), max(x0, x1)]
 
 
+
+# ---------------------------------------------------------------- 上游布局提示词
+# 「布局提示词输入」接进来的通常是一段布局 JSON（LLM 直接吐出来的，或别的
+# MOSS YXBOX 的「布局提示词」输出）。前端会把它实时导进画布，但 183 这种
+# 「上游出文本 → 本节点同一轮执行」的接法里，浏览器来不及在节点执行前把框
+# 铺上去，于是这一轮编译用的还是上一轮画布。这里在后端也认这段文本，让本轮
+# 输出跟上游同一次运行的内容对齐。
+_LAYOUT_LABEL_TYPE = {"text": "文字框", "character": "角色框", "object": "物体框"}
+_LAYOUT_CENTER_SPACES = {
+    "abs_centralized", "absolute_centralized", "centralized", "center", "centre",
+    "abs_center", "canvas_center",
+}
+
+
+def _json_slice_text(text):
+    """从可能带说明文字/代码块的整段回答里，截出最早 { 到最晚 } 的部分。"""
+    if not isinstance(text, str):
+        return ""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return ""
+    return text[start:end + 1]
+
+
+def _layout_items_of(data):
+    items = data.get("items")
+    if isinstance(items, list):
+        return items
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        for key in ("items", "elements"):
+            value = summary.get(key)
+            if isinstance(value, list):
+                return value
+    for key in ("elements", "boxes"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _layout_item_rect(item, centered, src_w, src_h):
+    """返回布局坐标下的 (左, 上, 宽, 高)（左上角原点、像素），认不出来返回 None。"""
+    numbers = None
+    bbox = item.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        try:
+            numbers = [float(value) for value in bbox[:4]]
+        except (TypeError, ValueError):
+            numbers = None
+    if numbers is not None and centered:
+        y1, x1, y2, x2 = numbers
+        left, right = x1 + src_w / 2.0, x2 + src_w / 2.0
+        top, bottom = y1 + src_h / 2.0, y2 + src_h / 2.0
+        if right < left:
+            left, right = right, left
+        if bottom < top:
+            top, bottom = bottom, top
+        return left, top, right - left, bottom - top
+    if numbers is not None:
+        x1, y1, x2, y2 = numbers
+        left, right = min(x1, x2), max(x1, x2)
+        top, bottom = min(y1, y2), max(y1, y2)
+        return left, top, right - left, bottom - top
+    # 也认 x / y / width / height 直接写开的写法
+    try:
+        left = float(item.get("x"))
+        top = float(item.get("y"))
+        width = float(item.get("width", item.get("w")))
+        height = float(item.get("height", item.get("h")))
+    except (TypeError, ValueError):
+        return None
+    return left, top, width, height
+
+
+def _layout_from_text(text, canvas_w, canvas_h):
+    """把上游文本解析成 (整体描述, 框列表)；不是布局 JSON 就返回 None。
+
+    框列表与「画布数据」里的结构一致：像素、左上角原点，且列表第一项是
+    画面最上层（上传的 items 是从背景到前景，这里倒过来）。
+    """
+    raw = _json_slice_text(text)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    items = _layout_items_of(data)
+    if not items:
+        return None
+    try:
+        src_w = float(data.get("width") or 0)
+        src_h = float(data.get("height") or 0)
+    except (TypeError, ValueError):
+        src_w = src_h = 0.0
+    space = str(data.get("bbox_coord_space") or "").strip().lower()
+    fmt = str(data.get("bbox_format") or "").strip().lower()
+    centered = fmt == "yxyx" or space in _LAYOUT_CENTER_SPACES
+    if src_w <= 0 or src_h <= 0:
+        # 没写画布尺寸（官方编译格式就不写）：按所有 bbox 的最大范围反推，
+        # 规则与前端 `parseLayoutText` 保持一致，两边换算出来的框才对得上。
+        max_x = max_y = 0.0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            values = None
+            bbox = item.get("bbox")
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                try:
+                    values = [float(value) for value in bbox[:4]]
+                except (TypeError, ValueError):
+                    values = None
+            if values is None:
+                try:
+                    bx = float(item.get("x"))
+                    by = float(item.get("y"))
+                    bw = float(item.get("width", item.get("w")))
+                    bh = float(item.get("height", item.get("h")))
+                except (TypeError, ValueError):
+                    continue
+                values = [bx, by, bx + bw, by + bh]
+            if centered:
+                max_x = max(max_x, abs(values[1]), abs(values[3]))
+                max_y = max(max_y, abs(values[0]), abs(values[2]))
+            else:
+                max_x = max(max_x, values[0], values[2])
+                max_y = max(max_y, values[1], values[3])
+        if centered:
+            src_w = src_w or max(16.0, round(max_x * 2))
+            src_h = src_h or max(16.0, round(max_y * 2))
+        else:
+            src_w = src_w or max(16.0, round(max_x))
+            src_h = src_h or max(16.0, round(max_y))
+    src_w = max(16.0, src_w or float(canvas_w))
+    src_h = max(16.0, src_h or float(canvas_h))
+    sx = float(canvas_w) / src_w
+    sy = float(canvas_h) / src_h
+
+    boxes = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        rect = _layout_item_rect(item, centered, src_w, src_h)
+        if rect is None:
+            continue
+        left, top, w, h = rect
+        x = int(round(left * sx))
+        y = int(round(top * sy))
+        w = max(8, int(round(w * sx)))
+        h = max(8, int(round(h * sy)))
+        x = max(0, min(max(0, canvas_w - 8), x))
+        y = max(0, min(max(0, canvas_h - 8), y))
+        w = max(8, min(w, canvas_w - x))
+        h = max(8, min(h, canvas_h - y))
+        label = str(item.get("label") or "").strip().lower()
+        box_type = _LAYOUT_LABEL_TYPE.get(label)
+        if not box_type:
+            box_type = TYPE_ALIASES.get(str(item.get("type") or "").strip(), "物体框")
+        text_value = item.get("text")
+        if isinstance(text_value, list):
+            text_value = "\n".join(str(part) for part in text_value if isinstance(part, str))
+        elif text_value is None:
+            text_value = ""
+        palette = item.get("palette") or item.get("color_palette") or []
+        boxes.append({
+            "type": box_type,
+            "x": x, "y": y, "w": w, "h": h,
+            "text": str(text_value or ""),
+            "desc": str(item.get("caption") or item.get("desc") or ""),
+            "palette": [str(color).upper() for color in palette if isinstance(color, str) and color.strip()][:5],
+            "hidden": bool(item.get("hidden")),
+        })
+    if not boxes:
+        return None
+    boxes.reverse()
+    caption = ""
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        caption = str(summary.get("caption") or "").strip()
+    if not caption:
+        caption = str(data.get("caption") or "").strip()
+    return caption, boxes
+
+
 def _compile_layout(prompt, elements, boxes, width, height):
     """编译布局提示词：优先调用官方 MOSSImageLayoutPrompt.execute。"""
     prompt = prompt or ""
@@ -881,6 +1069,16 @@ class MOSS_YXBOX:
         # 只有这样，输出宽/高、预览图、布局提示词、草稿 JSON 才和画布上的构图对得上。
         if data_w > 0 and data_h > 0:
             width, height = data_w, data_h
+
+        # 「布局提示词输入」接进来的布局 JSON：这一轮就用它编译，不依赖前端是否
+        # 已经把框导进画布（否则同一轮里会慢一拍，180 显示的是上一轮的布局）。
+        socket_layout = _layout_from_text(布局提示词输入, width, height)
+        if socket_layout:
+            socket_caption, socket_boxes = socket_layout
+            if socket_boxes:
+                boxes = socket_boxes
+            if socket_caption:
+                整体描述 = socket_caption
 
         # 列表里点「眼睛」隐藏的框：不画进预览、不参与布局提示词编译
         visible_boxes = [box for box in boxes if not box.get("hidden")]

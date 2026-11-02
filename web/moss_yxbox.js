@@ -495,6 +495,8 @@ function setup(node) {
   const state = (node.__yxbox = {
     ready: false,
     multi: false,
+    // 正在执行工作流：这期间读到的上游空文本不可靠，不能拿来清画布
+    executing: false,
     modal: null,
     // 描述框高度：由你拖右下角手柄决定，读不到就按 64 起
     proseH: clamp(Math.round(Number(node.properties?.yxProseH) || 64), 48, 1200),
@@ -8055,7 +8057,7 @@ function setup(node) {
   let lastLayoutText = null;
   let lastLayoutOk = false;
   let lastLayoutTry = 0;
-  // 这一口「上一次看到的是不是真有内容」：只有「本来是文本、后来被清空」才清画布。
+  // 这里记「上一次看到的是不是真有内容」：只有「本来是文本、后来被清空」才清画布。
   // 上游刚接上还没跑、或者上游节点报错没产出文本时读到的也是空串，
   // 那时候绝不能把用户自己画的框清掉（否则一点运行画布就空了、输出也跟着空）。
   let lastLayoutHadText = false;
@@ -8077,6 +8079,9 @@ function setup(node) {
     }
     lastLayoutTry = Date.now();
     if (!text.trim()) {
+      // 执行中读到的空串不算数：上游这一轮可能还没产出文本，
+      // 这时候清画布会把上一轮导进来的框和用户手画的框一起清掉。
+      if (state.executing) return;
       const wasText = lastLayoutHadText;
       lastLayoutText = text;
       lastLayoutOk = true;
@@ -8088,6 +8093,36 @@ function setup(node) {
     lastLayoutText = text;
     lastLayoutOk = applyLayoutText(text);
   };
+
+  // 上游一执行完就立刻再同步一次：同一轮里本节点可能先跑（于是读到上游上一轮的
+  // 文本），等上游的 executed 事件到了再导一次，画布就不用等到下一个 120ms 才更新。
+  const socketOriginId = () => {
+    const slot = layoutSlot();
+    return slot && slot.link != null ? linkOriginId(slot) : null;
+  };
+  const onUpstreamExecuted = (event) => {
+    try {
+      if (!node.graph) return;
+      const origin = socketOriginId();
+      if (origin == null) return;
+      const detail = event?.detail || {};
+      const ids = [detail.node, detail.display_node]
+        .filter((id) => id != null)
+        .map((id) => String(id));
+      if (!ids.includes(String(origin))) return;
+      syncLayoutSocket();
+    } catch (error) {
+      console.warn("[MOSS YXBOX] 上游执行后同步布局失败", error);
+    }
+  };
+  const onExecutionState = (event) => {
+    state.executing = Boolean(event?.detail);
+  };
+  const socketEvents = app.api || window.comfyAPI?.api?.api || null;
+  socketEvents?.addEventListener?.("executed", onUpstreamExecuted);
+  socketEvents?.addEventListener?.("executing", onExecutionState);
+  socketEvents?.addEventListener?.("execution_interrupted", () => { state.executing = false; });
+  socketEvents?.addEventListener?.("execution_error", () => { state.executing = false; });
 
   // ---------------------------------------------------------------- 预设（保存 / 管理 / 加载）
   const PRESET_KEY = "moss-yxbox-presets-v1";
