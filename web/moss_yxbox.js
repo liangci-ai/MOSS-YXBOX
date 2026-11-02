@@ -43,7 +43,7 @@ const bgSlotIndex = (name) => {
 };
 
 // 每个参数一个锁：锁上以后，画布上和列表里都不能再改
-const FIELDS = ["type", "text", "desc", "w", "h", "color", "x", "y"];
+const FIELDS = ["type", "text", "desc", "w", "h", "color", "x", "y", "num"];
 // 「导入原图」进来的那张图也住在背景图区，但它是独立身份：
 // 不占「背景图N」输入口（伪槽位），不参与 B 编号，尺寸来源里单独有一项。
 const SOURCE_KIND = "source";
@@ -257,6 +257,25 @@ const CSS = `
 .yx-num{font-size:11px;color:#8d90a0;text-align:center;cursor:pointer;user-select:none;}
 .yx-item.yx-sel .yx-num{color:#8fb4ff;}
 .yx-item.yx-bg .yx-num{color:#ffb454;}
+/* 编号表头格：左边「编号」、右边一颗「重命名」小按钮（编号列 64px，放得下） */
+.yx-row.yx-header .yx-num-head{display:flex;align-items:center;justify-content:center;gap:1px;
+  overflow:visible;white-space:nowrap;}
+.yx-num-head-btn{height:14px;padding:0 1px;font-size:9px;line-height:12px;font-family:inherit;
+  border:1px solid #3a3f52;border-radius:3px;background:#1d2030;color:#b6bacb;cursor:pointer;
+  white-space:nowrap;flex:0 0 auto;}
+.yx-num-head-btn:hover{background:#262b3f;border-color:#4d6cff;color:#e8ecff;}
+.yx-num-head-btn:active{background:#2f3757;}
+.yx-num-head-btn:focus-visible{outline:1px solid #4d6cff;}
+/* 编号格：小锁 +（背景图才有 B 前缀）+ 数字框。平时只读（单击选行），双击才进编辑 */
+.yx-num-cell{display:flex;align-items:center;justify-content:center;gap:0;min-width:0;overflow:hidden;}
+.yx-num-head-btn-arm{background:#3b2f14;border-color:#c9a227;color:#ffe08a;}
+.yx-no-input{flex:1 1 auto;width:0;min-width:0;height:18px;box-sizing:border-box;padding:0 2px;
+  font-size:11px;font-family:inherit;text-align:center;color:#8d90a0;background:transparent;
+  border:1px solid transparent;border-radius:3px;outline:none;}
+.yx-item.yx-sel .yx-no-input{color:#8fb4ff;}
+.yx-item.yx-bg .yx-no-input{color:#ffb454;}
+.yx-no-input:hover{border-color:#343848;}
+.yx-no-input:focus{cursor:text;background:#15161d;border-color:#4d6cff;color:#e8ecff;}
 .yx-drag{cursor:grab;color:#7c7f8d;font-size:11px;text-align:center;user-select:none;touch-action:none;}
 .yx-drag:active{cursor:grabbing;}
 .yx-in,.yx-sel-type{width:100%;box-sizing:border-box;background:#12131a;border:1px solid #2a2c37;border-radius:4px;
@@ -801,12 +820,27 @@ function setup(node) {
   // ---------------------------------------------------------------- dom
   const style = document.createElement("style");
   // 列宽表 + 竖分隔线的列位（1px 的独立小列，画在数据行里；表头用同宽透明占位保持对齐）
-  const BG_COLS = ["12px", "14px", "26px", "30px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,2fr)",
+  const BG_COLS = ["12px", "14px", "26px", "64px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,2fr)",
     "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "14px", "54px", "14px", "minmax(62px,.5fr)",
     "14px", "minmax(62px,.5fr)", "24px", "32px", "50px", "24px"];
-  const BOX_COLS = ["12px", "14px", "26px", "30px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,1.1fr)",
+  const BOX_COLS = ["12px", "14px", "26px", "64px", "12px", "minmax(56px,.7fr)", "12px", "minmax(0,1.1fr)",
     "12px", "minmax(0,1.3fr)", "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "14px", "28px",
     "14px", "minmax(62px,.5fr)", "14px", "minmax(62px,.5fr)", "24px", "24px"];
+  // 列表整行完整显示所需的最小宽度：固定列宽 + 竖线(1px) + 列间距(4px) + 行内左右 padding(8px)
+  const colPx = (col) => {
+    const found = /(\d+(?:\.\d+)?)px/.exec(String(col));
+    return found ? Number(found[1]) : 0;
+  };
+  const tableMinWidth = (cols, seps) => {
+    let sum = 0;
+    for (let i = 0; i < cols.length; i += 1) sum += colPx(cols[i]) + (seps.has(i) ? 1 : 0);
+    const cells = cols.length + seps.size;
+    return sum + Math.max(0, cells - 1) * 4 + 8;
+  };
+  // 节点宽度里还要装下节点自身的边距 / 边框 / 插件根容器的 padding，统一留 64px
+  const requiredNodeWidth = () => Math.ceil(
+    Math.max(tableMinWidth(BG_COLS, BG_SEP), tableMinWidth(BOX_COLS, BOX_SEP)) + 64);
+
   // 这些列前面要竖线：整体锁 / 选中 / 编号 / 每把锁 / 显示 / 重置 / 画布 / 删除
   const BG_SEP = new Set([1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 19, 20, 21]);
   const BOX_SEP = new Set([1, 2, 3, 4, 7, 9, 11, 13, 15, 17, 19, 21]);
@@ -1364,7 +1398,7 @@ function setup(node) {
     "高", "", "颜色", "", "x", "", "y", "显示", "删除"];
   const HEAD_HINT = {
     选中: "勾上＝选中这一行（可多选）",
-    编号: "图层序号，数字越小越靠上层",
+    编号: "只是图层名字，不影响上下叠放（层序只看列表上下顺序）。重排时列表最下面是 01、越往上号越大；点表头右边「重命名」（点两次确认），双击数字可以手改",
     类型: "绘制框类型：文字框 / 角色框 / 物体框",
     文字: "框内写的文字（双击画布上的框也能编辑）",
     描述: "给模型看的这段画面的描述",
@@ -1407,6 +1441,52 @@ function setup(node) {
     bgHeadCells.push(span);
   }
   appendCells(bgHead, bgHeadCells, BG_SEP, true);
+  // 「编号」表头格：右边贴一颗「重命名」按钮＝按当前列表顺序重排编号。
+  // 编号列从 30px 加宽到 64px 就是为了放下它（以及行里的编号锁 + 数字框）。
+  // 重排方向：列表最下面那行（最早画的、画面最下层）＝01 / B1，往上依次 02、03…
+  // 按钮要点两次：第一次变成「确认？」，6 秒内再点一次才真的重排（点了别的就取消）。
+  const numHeadButtons = {};
+  const clearNumArm = (which) => {
+    const arm = state.numRenameArm;
+    if (!arm || (which && arm.which !== which)) return;
+    if (arm.timer) clearTimeout(arm.timer);
+    const btn = numHeadButtons[arm.which];
+    if (btn) {
+      btn.textContent = "重命名";
+      btn.classList.remove("yx-num-head-btn-arm");
+    }
+    state.numRenameArm = null;
+  };
+  const decorateNumHead = (span, which) => {
+    if (!span) return;
+    span.classList.add("yx-num-head");
+    const btn = el("button", "yx-num-head-btn", "重命名");
+    btn.type = "button";
+    btn.title = which === "bg"
+      ? "按背景图区当前顺序重排编号：列表最下面是 B1、往上依次 B2、B3…（编号被锁住的行不动，原图不参与）；点两次才执行"
+      : "按绘框区当前顺序重排编号：列表最下面是 01、往上依次 02、03…（编号被锁住的行不动）；点两次才执行";
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const arm = state.numRenameArm;
+      if (arm && arm.which === which) {
+        clearNumArm(which);
+        renumberZone(which);
+        return;
+      }
+      clearNumArm();
+      btn.textContent = "确认？";
+      btn.classList.add("yx-num-head-btn-arm");
+      const timer = setTimeout(() => clearNumArm(which), 6000);
+      // Node（自测环境）里别让这个定时器拖住进程退出；浏览器里是数字，跳过
+      if (timer && typeof timer.unref === "function") timer.unref();
+      state.numRenameArm = { which, timer };
+    });
+    numHeadButtons[which] = btn;
+    span.appendChild(btn);
+  };
+  decorateNumHead(boxHeadCells[3], "box");
+  decorateNumHead(bgHeadCells[3], "bg");
 
   // 表头里的「反选」：背景图区、绘框区各一个，只反选自己那一区的对象。
   // 它是个真按钮（能点、有悬停反馈），所以用按钮样式跟旁边的表头文字区分开。
@@ -2916,6 +2996,106 @@ function setup(node) {
     return button;
   };
 
+  // 编号格 = 小锁 +（背景图才有 B 前缀）+ 数字框。
+  // 单击这一格仍然是「选中这一行」（多选开着就是加选/减选），双击才进编辑；
+  // 平时数字框 readonly，点一下连焦点都不给，免得和选行抢点击。
+  const makeNumEditor = (item, which) => {
+    const cell = el("div", "yx-num yx-num-cell");
+    const input = el("input", "yx-no-input");
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.readOnly = true;
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.title = which === "bg"
+      ? "背景图编号（B1、B2…）：单击这一格是选中这张图；双击可以改编号（1–999，不能和其他背景图重复）"
+      : "框编号（01、02…）：单击这一格是选中这个框；双击可以改编号（1–999，不能和其他框重复）";
+    const lock = lockButton(item, "num", "编号");
+    cell.appendChild(lock);
+    cell.appendChild(input);
+    const shown = () => {
+      const n = Number(item.__no) || 0;
+      if (n <= 0) return "";
+      // 两个区都是「字母 + 数字」全在框里：背景图 B1、B2…，框 01、02…
+      return which === "bg" ? "B" + n : String(n).padStart(2, "0");
+    };
+    const sync = (force) => {
+      // 正在打字时别把用户输入刷回去（列表有定时刷新）；
+      // force=true 用在「编辑结束」时——这时焦点可能还在框里，但必须把值刷回真正的编号
+      if (!force && document.activeElement === input) return;
+      input.readOnly = true;
+      input.value = shown();
+    };
+    // 平时只读：按下不聚焦、不选中文本，让点击继续往上传给「选行」
+    input.addEventListener("mousedown", (event) => {
+      if (input.readOnly) event.preventDefault();
+    });
+    const sameZone = () => (which === "bg" ? S.bgs : S.boxes);
+    const beginEdit = () => {
+      if (isSourceBg(item) || item.lock?.num) return;
+      // 双击 = 两次单击，第一次选中、第二次会取消选中；进编辑时把这一行重新选中，
+      // 免得「正在改编号的那一行反而是没选中的」
+      if (!S.selected.has(item)) {
+        if (!state.multi) S.selected.clear();
+        S.selected.add(item);
+        syncRows();
+        paint();
+      }
+      input.readOnly = false;
+      input.focus();
+      input.select();
+    };
+    const endEdit = (restore) => {
+      if (input.readOnly) return;
+      input.readOnly = true;
+      if (restore) {
+        sync(true);
+        return;
+      }
+      // 背景图的框里显示的是「B1」，手改时带不带 B 都认（B7 / b7 / 7 都行）
+      const text = String(input.value || "").trim().replace(/^[Bb]\s*/, "");
+      const n = /^\d{1,3}$/.test(text) ? Number(text) : NaN;
+      if (!(n >= 1 && n <= 999)) {
+        showToast("编号只接受 1–999 的整数");
+        sync(true);
+        return;
+      }
+      const dup = sameZone().some((other) => other && other !== item
+        && !isSourceBg(other) && (Number(other.__no) || 0) === n);
+      if (dup) {
+        showToast("编号 " + n + " 已经有别的图层在用了");
+        sync(true);
+        return;
+      }
+      if ((Number(item.__no) || 0) !== n) {
+        item.__no = n;
+        if (which === "bg") item.label = "B" + n;
+        refreshRows();
+        paint();
+        commit();
+      }
+      sync(true);
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        endEdit(false);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        endEdit(true);
+      }
+    });
+    input.addEventListener("blur", () => endEdit(false));
+    cell.addEventListener("dblclick", (event) => {
+      if (event.target && event.target.closest && event.target.closest("button")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      beginEdit();
+    });
+    sync();
+    return { cell, input, sync, beginEdit, endEdit };
+  };
+
   const foldToggle = (button, area) => {
     const open = area.style.display === "none";
     area.style.display = open ? "block" : "none";
@@ -2961,8 +3141,8 @@ function setup(node) {
     const check = el("input", "yx-check");
     check.type = "checkbox";
     check.title = "选中这个框（和画布上点击同步）";
-    const num = el("div", "yx-num", "01");
-    num.title = "点击只选中这一个框";
+    const numEditor = makeNumEditor(box, "box");
+    const num = numEditor.cell;
 
     const lockType = lockButton(box, "type", "类型");
     // 选中带：勾选框 → 编号，这一段的空白处点一下也能选中
@@ -3072,10 +3252,7 @@ function setup(node) {
       if (document.activeElement !== desc) desc.value = box.desc || "";
       if (document.activeElement !== expandText) expandText.value = box.text || "";
       if (document.activeElement !== expandDesc) expandDesc.value = box.desc || "";
-      const index = S.boxes.indexOf(box);
-      num.textContent = Number(box.__no) > 0
-        ? String(box.__no).padStart(2, "0")
-        : (index >= 0 ? String(index + 1).padStart(2, "0") : "");
+      numEditor.sync();
 
       type.disabled = locked("type");
       text.disabled = locked("text");
@@ -3102,12 +3279,14 @@ function setup(node) {
     });
 
     num.addEventListener("click", (event) => {
-      // 点编号：没选中就只选这一个；已经选中就取消选中
+      // 点编号格：没选中就选中，已经选中就取消。
+      // 多选开着时是加选 / 减选，不再把其它已选对象清掉（以前这里会清成单选）
+      if (event.target && event.target.closest && event.target.closest("button")) return;
       event.stopPropagation();
       if (S.selected.has(box)) {
         S.selected.delete(box);
       } else {
-        S.selected.clear();
+        if (!state.multi) S.selected.clear();
         S.selected.add(box);
       }
       syncRows();
@@ -3230,8 +3409,16 @@ function setup(node) {
       : "拖动排序：背景图之间的前后关系（永远在所有绘制框下面）";
     const check = el("input", "yx-check");
     check.type = "checkbox";
-    const num = el("div", source ? "yx-num yx-num-src" : "yx-num", "B1");
-    if (source) num.title = "这张是「导入原图」进来的原图：不占背景图编号，也不占背景图输入口";
+    let numEditor = null;
+    let num = null;
+    if (source) {
+      // 原图没有 B 编号：只显示「原图」，不能编辑、也没有编号锁
+      num = el("div", "yx-num yx-num-src", "原图");
+      num.title = "这张是「导入原图」进来的原图：不占背景图编号，也不占背景图输入口";
+    } else {
+      numEditor = makeNumEditor(bg, "bg");
+      num = numEditor.cell;
+    }
 
     const lockType = el("div", null, "");
     const type = el("div", null, source ? "原图" : "背景图");
@@ -3361,7 +3548,8 @@ function setup(node) {
       check.checked = selected;
       eye.classList.toggle("yx-off", !!bg.hidden);
       eye.textContent = bg.hidden ? "🚫" : "👁";
-      num.textContent = bg.label || "B";
+      if (numEditor) numEditor.sync();
+      else num.textContent = bg.label || "B";
       wInput.value = Math.round(bg.w);
       hInput.value = Math.round(bg.h);
       xInput.value = Math.round(bg.x);
@@ -3397,12 +3585,14 @@ function setup(node) {
       paint();
     });
     num.addEventListener("click", (event) => {
-      // 点编号切换选中：已选中就取消（和绘框区保持一致）
+      // 点编号格切换选中：已选中就取消（和绘框区保持一致）；
+      // 多选开着时是加选 / 减选，不再清掉其它已选对象
+      if (event.target && event.target.closest && event.target.closest("button")) return;
       event.stopPropagation();
       if (S.selected.has(bg)) {
         S.selected.delete(bg);
       } else {
-        S.selected.clear();
+        if (!state.multi) S.selected.clear();
         S.selected.add(bg);
       }
       syncRows();
@@ -3696,6 +3886,48 @@ function setup(node) {
     if (state.layoutReady) layout();
   }
 
+  // 编号重排：按当前列表顺序重排成 01…/B1…
+  // 方向＝列表最下面那行（最早画的、画面最下层）拿 01，往上依次 02、03…；
+  // 原图不参与；编号被锁住的行保留原来的号，其余行按顺序取「没被占用的最小号」，
+  // 这样既不会两行同号，也不会把锁住的那一行顶掉。
+  function renumberZone(which) {
+    const isBg = which === "bg";
+    const items = (isBg ? S.bgs : S.boxes).filter(Boolean).filter((item) => !isSourceBg(item));
+    if (!items.length) {
+      showToast(isBg ? "背景图区还没有背景图，没什么可重排的" : "绘框区还没有框，没什么可重排的");
+      return;
+    }
+    const locked = new Set();
+    for (const item of items) {
+      const n = Number(item.__no) || 0;
+      if (item.lock?.num && n > 0) locked.add(n);
+    }
+    // 从列表最下面往上走：最下面那行拿 1，越往上号越大
+    let cursor = 1;
+    let changed = 0;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.lock?.num) continue; // 锁住编号的行不动
+      while (locked.has(cursor)) cursor += 1;
+      if ((Number(item.__no) || 0) !== cursor) {
+        item.__no = cursor;
+        if (isBg) item.label = "B" + cursor;
+        changed += 1;
+      }
+      cursor += 1;
+    }
+    if (!changed) {
+      showToast("编号已经是按顺序排好的");
+      return;
+    }
+    refreshRows();
+    paint();
+    commit();
+    showToast(isBg
+      ? "已重排 " + changed + " 个背景图编号：列表最下面＝B1，往上递增（可 Ctrl+Z 撤销）"
+      : "已重排 " + changed + " 个框编号：列表最下面＝01，往上递增（可 Ctrl+Z 撤销）");
+  }
+
   const syncRows = () => {
     for (const row of S.rows.values()) row.__sync?.();
     state.syncBar?.();
@@ -3980,9 +4212,10 @@ function setup(node) {
     const width0 = Math.round(current[0] || 0);
     const height0 = Math.round(current[1] || 0);
     const isDefault = !width0 || !height0 || width0 < 480 || height0 < 320;
-    if (!isDefault) return;
-    const width = Math.max(980, width0 || 980);
-    const height = Math.max(need, 560);
+    // 宽度：初次加载就保证列表整行能完整露出来（列多、窄了会把右边的按钮挤掉），
+    // 用户此前存过更窄的尺寸也先撑到最小可视宽度，之后再自己拉宽/压窄都随你
+    const width = Math.max(980, requiredNodeWidth(), width0 || 980);
+    const height = isDefault ? Math.max(need, 560) : height0;
     if (width !== width0 || height !== height0) {
       node.setSize([width, height]);
     }
@@ -5366,7 +5599,7 @@ function setup(node) {
         desc: "",
         dim: 45,
         lockAll: false,
-        lock: emptyLocks(["w", "h", "x", "y", "desc", "dim"]),
+        lock: emptyLocks(["w", "h", "x", "y", "desc", "dim", "num"]),
         isBg: true,
         kind: "bg",
         label: "",
@@ -5404,7 +5637,7 @@ function setup(node) {
       desc: "",
       dim: 45,
       lockAll: false,
-      lock: emptyLocks(["w", "h", "x", "y", "desc", "dim"]),
+      lock: emptyLocks(["w", "h", "x", "y", "desc", "dim", "num"]),
       isBg: true,
       label: SOURCE_LABEL,
       __no: 0,
@@ -5936,6 +6169,10 @@ function setup(node) {
     const result = originalConfigure?.call?.(this, info);
     try {
       configure(info);
+      // 工作流里存下来的尺寸可能比列表需要的还窄（编号列加宽过，老档更容易窄）：
+      // 载入完再撑一次宽度，保证「编号 / 重命名 / 各把锁 / 画布 / 删除」这些按钮全露出来。
+      // 高度不动——你调过的高度下次打开还在。
+      fitNodeInitial();
     } catch (error) {
       console.error("[MOSS YXBOX] 恢复画布数据失败", error);
     }
@@ -8502,6 +8739,7 @@ function setup(node) {
     proseText: () => String(proseWidget?.value ?? ""),
     drawTag, itemColor, drawAxes, drawDiagonals,
     nextLabelNo, fillMissingNos,
+    requiredNodeWidth, tableMinWidth, renumberZone, decorateNumHead,
     syncLinkedCanvas, linkedInt, inputSlot, widgetInt, parseSizeText,
     LINK_WIDTH_NAMES, LINK_HEIGHT_NAMES, LINK_LENGTH_NAMES,
     fillBgIntoCanvas, followImageCanvas, applyModeSize, applyCanvasSize, applyLayoutText, applyPngCandidate,
