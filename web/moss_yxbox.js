@@ -6309,6 +6309,22 @@ function setup(node) {
   let lastWidth = -1;
   let lastAvail = -1;
   let lastTickKey = "";
+  // 缩放时不再逐帧重画：几何探测降到 ~10 次/秒，画面等滚轮停下再整张重画一次。
+  // 只是把「每帧重建 canvas 位图」推迟到最后一次变化之后，最终绘制结果与原来完全一致。
+  let lastProbeAt = 0;
+  let zoomPaintTimer = 0;
+  const scheduleZoomPaint = () => {
+    if (zoomPaintTimer) clearTimeout(zoomPaintTimer);
+    zoomPaintTimer = setTimeout(() => {
+      zoomPaintTimer = 0;
+      if (!canvas.isConnected) return;
+      try {
+        paint();
+      } catch (error) {
+        console.error("[MOSS YXBOX] 延迟重绘失败", error);
+      }
+    }, 150);
+  };
   let lastProseText = null;
   let lastNodeH = -1;
   let lastAppliedProse = -1;
@@ -6377,9 +6393,16 @@ function setup(node) {
       requestAnimationFrame(tick);
       return;
     }
-    const width = Math.round(stage.clientWidth || 0);
-    const rect = canvas.getBoundingClientRect();
-    const key = `${Math.round(rect.width)}x${Math.round(rect.height)}@${window.devicePixelRatio || 1}`;
+    const nowTick = Date.now();
+    const probeDue = nowTick - lastProbeAt >= 100;
+    let width = lastWidth;
+    let key = lastTickKey;
+    if (probeDue) {
+      lastProbeAt = nowTick;
+      width = Math.round(stage.clientWidth || 0);
+      const rect = canvas.getBoundingClientRect();
+      key = `${Math.round(rect.width)}x${Math.round(rect.height)}@${window.devicePixelRatio || 1}`;
+    }
     // 「整体描述」对外只从我自己的 textarea 读，这里只做「外部改了原生值」时的回灌
     if (proseWidget) {
       const text = String(proseWidget.value ?? "");
@@ -6406,13 +6429,15 @@ function setup(node) {
     }
     // 只用「宽度」变化触发重排；不再看容器高度，否则改高度会反过来又触发重排，
     // 每帧在两个高度之间来回跳（表现就是整个节点上下抽搐）
-    if (width !== lastWidth) {
-      lastWidth = width;
-      lastTickKey = key;
-      if (width > 0) layout();
-    } else if (key !== lastTickKey) {
-      lastTickKey = key;
-      paint();
+    if (probeDue) {
+      if (width !== lastWidth) {
+        lastWidth = width;
+        lastTickKey = key;
+        if (width > 0) layout();
+      } else if (key !== lastTickKey) {
+        lastTickKey = key;
+        scheduleZoomPaint();
+      }
     }
     requestAnimationFrame(tick);
   };
@@ -6506,12 +6531,20 @@ function setup(node) {
     return out;
   };
 
-  // 一段文本里是不是布局 JSON（含 bbox 的数字数组）
+  // 一段文本里是不是布局 JSON（编译格式的 bbox，或画布数据里的 boxes 等）
+  // 同一段文字可能来自很多地方（画布数据、提示词、说明文字），这里只做「像不像布局」的粗筛，
+  // 真正能不能解析交给下面的 parseLayoutText 判定：宁可多收一点，也别把正确的那份漏掉。
   const canvasDataText = (value) => {
     const text = typeof value === "string" ? value : "";
     if (text.length < 20) return null;
-    // 允许外面裹着说明文字 / 代码块：只要真的出现 "bbox": [数字 就交给解析器去捞
-    return /"bbox"\s*:\s*\[\s*-?\d/.test(text) ? text : null;
+    // ① 编译格式：{"items":[… "bbox":[y1,x1,y2,x2] …], "bbox_coord_space":…}
+    if (/"bbox"\s*:\s*\[/.test(text)) return text;
+    // ② 画布数据 / 草稿：{"width":…,"height":…,"boxes":[{x,y,w,h,…}]}
+    if (/"boxes"\s*:\s*\[\s*\{/.test(text)) return text;
+    // ③ 别的写法：summary.items / elements 里直接带坐标的
+    if (/"(?:items|elements)"\s*:\s*\[\s*\{/.test(text)
+      && /"(?:bbox|x|y|width|w|height|h)"\s*:/.test(text)) return text;
+    return null;
   };
 
   // 把一个对象里所有字符串摊平（ComfyUI 的 prompt / workflow 都是嵌套结构）
@@ -6636,8 +6669,11 @@ function setup(node) {
       const size = width >= 8 && height >= 8 ? ` · ${width}×${height}` : "";
       const caption = String(parsed?.caption || "").trim() ? " · 带整体描述" : "";
       const badge = active === true ? "✔ 参与出图 · " : (active === false ? "未参与出图 · " : "");
+      // 同一张图里常常同时存着编译好的布局提示词和节点的画布数据，标出来才知道选哪份
+      const draft = /"boxes"\s*:\s*\[/.test(text) && !/"bbox"\s*:/.test(text);
+      const kind = draft ? "画布数据 · " : "布局提示词 · ";
       list.push({
-        label: `${badge}${label} · ${count} 个框${size}${caption}`,
+        label: `${badge}${label} · ${kind}${count} 个框${size}${caption}`,
         json: text,
         width,
         height,
@@ -7143,6 +7179,26 @@ function setup(node) {
     return parts.join("\n");
   };
 
+  // 布局 JSON 的「层次感」排版：对象多层缩进、bbox/palette 这类数值数组保持一行，
+  // 与官方文档示例一致；nodes.py 的 _format_layout_json 是同一套规则。
+  const prettyLayoutJson = (value, indent = 0) => {
+    const pad = "  ".repeat(indent);
+    const inner = "  ".repeat(indent + 1);
+    if (Array.isArray(value)) {
+      if (!value.length) return "[]";
+      if (value.every((item) => item === null || typeof item !== "object")) {
+        return "[" + value.map((item) => JSON.stringify(item)).join(", ") + "]";
+      }
+      return "[\n" + value.map((item) => inner + prettyLayoutJson(item, indent + 1)).join(",\n") + "\n" + pad + "]";
+    }
+    if (value && typeof value === "object") {
+      const keys = Object.keys(value);
+      if (!keys.length) return "{}";
+      return "{\n" + keys.map((key) => inner + JSON.stringify(key) + ": " + prettyLayoutJson(value[key], indent + 1)).join(",\n") + "\n" + pad + "}";
+    }
+    return JSON.stringify(value);
+  };
+
   const compileLayoutText = () => {
     const caption = readCaption();
     const visible = S.boxes.filter((box) => !box.hidden);
@@ -7173,7 +7229,7 @@ function setup(node) {
       ];
       return item;
     });
-    return composeFinalPrompt(JSON.stringify({
+    return composeFinalPrompt(prettyLayoutJson({
       summary: { caption: caption.trim() },
       items,
       bbox_coord_space: "abs_centralized",
@@ -8843,6 +8899,7 @@ function setup(node) {
     syncLinkedCanvas, linkedInt, inputSlot, widgetInt, parseSizeText,
     LINK_WIDTH_NAMES, LINK_HEIGHT_NAMES, LINK_LENGTH_NAMES,
     fillBgIntoCanvas, followImageCanvas, applyModeSize, applyCanvasSize, applyLayoutText, applyPngCandidate,
+    mossCandidates, canvasDataText,
     openPngChooser, showToast, paint, closeMenu, buildMenu,
     syncSizeWidgets, LABEL_TO_TYPE,
     upstreamLayoutText, wMode,

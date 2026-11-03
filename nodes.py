@@ -707,6 +707,46 @@ def _layout_from_text(text, canvas_w, canvas_h):
     return caption, boxes
 
 
+def _format_layout_json(value, indent=0):
+    """把布局 JSON 排成人读得懂的缩进格式（与官方文档示例一致）。
+
+    只对「数值数组」做保内联处理（bbox、palette 这类），对象与对象数组多层缩进，
+    保证官方示例里 bbox 写在一行的那种层次感。
+    """
+    pad = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        inner = "  " * (indent + 1)
+        lines = []
+        for key, item in value.items():
+            lines.append(inner + json.dumps(str(key), ensure_ascii=False) + ": " + _format_layout_json(item, indent + 1))
+        return "{\n" + ",\n".join(lines) + "\n" + pad + "}"
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return "[" + ", ".join(_format_layout_json(item, indent) for item in value) + "]"
+        inner = "  " * (indent + 1)
+        return "[\n" + ",\n".join(inner + _format_layout_json(item, indent + 1) for item in value) + "\n" + pad + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _pretty_layout_text(text):
+    """一段文本里如果夹着布局 JSON，就把那一段重排成缩进格式；不是 JSON 就原样返回。"""
+    raw = str(text or "")
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return raw
+    try:
+        data = json.loads(raw[start:end + 1])
+    except Exception:
+        return raw
+    if not isinstance(data, dict) or "items" not in data or "summary" not in data:
+        return raw
+    return raw[:start] + _format_layout_json(data) + raw[end + 1:]
+
+
 def _compile_layout(prompt, elements, boxes, width, height):
     """编译布局提示词：优先调用官方 MOSSImageLayoutPrompt.execute。"""
     prompt = prompt or ""
@@ -728,7 +768,7 @@ def _compile_layout(prompt, elements, boxes, width, height):
         )
         args = getattr(out, "args", None)
         if args:
-            return args[0]
+            return _pretty_layout_text(args[0])
     except Exception:
         pass
     return _compile_layout_local(prompt, elements, boxes, width, height)
@@ -764,7 +804,7 @@ def _compile_layout_local(prompt, elements, boxes, width, height):
         "bbox_coord_space": "abs_centralized",
         "bbox_format": "yxyx",
     }
-    return json.dumps(layout, ensure_ascii=False, separators=(",", ":"))
+    return _pretty_layout_text(json.dumps(layout, ensure_ascii=False, separators=(",", ":")))
 
 
 def _layout_draft(caption, regions, width, height):
