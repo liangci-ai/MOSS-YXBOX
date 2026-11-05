@@ -1954,11 +1954,13 @@ function setup(node) {
   // ---------------------------------------------------------------- 底部状态栏
   // 只做只读信息展示：版本号 / 框与背景数量 / 画布尺寸 / 缩放 / 网格。
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
-  const STATUS_VERSION = "1.0.4";
+  // 版本号不再写死在 JS 里（发版时最容易忘改）：先显示兜底串，随即向本插件后端
+  // 的 /moss_yxbox/version 取「实际安装版本」覆盖它——改 pyproject.toml 后刷新页面即生效。
+  const STATUS_VERSION_FALLBACK = "1.0.7";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
-  const sbVer = el("span", "yx-sb-ver", `MOSS YXBOX v${STATUS_VERSION}`);
+  const sbVer = el("span", "yx-sb-ver", STATUS_VERSION_FALLBACK ? `MOSS YXBOX v${STATUS_VERSION_FALLBACK}` : "MOSS YXBOX");
   const sbCounts = el("span", null, "框 0 / 背景 0");
   const sbCanvas = el("span", null, "");
   const sbZoom = el("span", null, "");
@@ -1992,6 +1994,42 @@ function setup(node) {
   };
   state.updateStatus = updateStatus;
   updateStatus();
+
+  // 状态栏版本号：读后端实际安装版本（pyproject.toml）。取不到就保留兜底串，不报错、不阻塞界面。
+  const setStatusVersion = (raw) => {
+    const v = String(raw == null ? "" : raw).trim();
+    if (!v || !sbVer) return;
+    sbVer.textContent = `MOSS YXBOX v${v}`;
+  };
+  state.setStatusVersion = setStatusVersion;
+  const loadStatusVersion = () => {
+    const apply = (data) => {
+      if (data && typeof data === "object" && data.version) setStatusVersion(data.version);
+    };
+    try {
+      const api = globalThis.api;
+      if (api && typeof api.fetchApi === "function") {
+        api.fetchApi("/moss_yxbox/version", { cache: "no-store" })
+          .then((res) => (res && res.ok ? res.json() : null))
+          .then(apply)
+          .catch(() => {});
+        return;
+      }
+    } catch (_error) {
+      // 忽略：退回原生 fetch
+    }
+    try {
+      if (typeof fetch === "function") {
+        fetch("/moss_yxbox/version", { cache: "no-store" })
+          .then((res) => (res && res.ok ? res.json() : null))
+          .then(apply)
+          .catch(() => {});
+      }
+    } catch (_error) {
+      // 忽略：离线/被拦截时保留兜底串
+    }
+  };
+  loadStatusVersion();
 
   // ---------------------------------------------------------------- 右键菜单
   const menu = el("div", "yx-menu");
@@ -2883,12 +2921,32 @@ function setup(node) {
       }
       return;
     }
-    // 按缩放规则：拿列表最上面那张已接上的背景图作为基准
-    const bg = activeBg();
-    if (!bg || !bg.natW || !bg.natH) return;
+    // 选的是「按原图 / 按背景图N」，但那张图还没接上：画布先不动（别退到别的图上）
+    if (mode === MODE_SOURCE || MODE_BG_RE.test(mode)) return;
+    // 按缩放规则：尺寸 = 画布比例 + 基准边长度，本来就不需要一张图；
+    // 只有「不缩放」要一张基准图的原始宽高（基准图：第一张背景图，没有就用原图）。
+    const bg = activeBg() || sourceBg();
     const mult = multiple();
-    const [w, h] = scaledSize(bg.natW, bg.natH);
+    const usesBase = String(wBasis?.value ?? "长边") === "不缩放";
+    if (usesBase && (!bg || !Number(bg.natW) || !Number(bg.natH))) {
+      // 一张图都没有：退回「画布宽 / 画布高」两个数字
+      applyCanvasSize(numeric(wWidth, S.width), numeric(wHeight, S.height), rescale);
+      return;
+    }
+    const [w, h] = scaledSize(Number(bg?.natW) || 0, Number(bg?.natH) || 0);
     applyCanvasSize(roundUp(w, mult), roundUp(h, mult), rescale);
+  };
+
+  // 切到「自定义尺寸」之前，把画布宽 / 画布高 对齐当前画布：
+  // 否则画布会被上一次留下的旧数字顶回去，看着像「什么都没改，画布却变了」
+  const alignCustomWidgets = () => {
+    state.suppress = true;
+    try {
+      if (wWidth) wWidth.value = Math.round(S.width);
+      if (wHeight) wHeight.value = Math.round(S.height);
+    } finally {
+      state.suppress = false;
+    }
   };
 
   // ---------------------------------------------------------------- clamping
@@ -5735,7 +5793,9 @@ function setup(node) {
     if (!wMode) return false;
     syncSizeModeOptions();
     syncAspectOptions();
-    wMode.value = String(mode || MODE_CUSTOM);
+    const next = String(mode || MODE_CUSTOM);
+    if (next === MODE_CUSTOM) alignCustomWidgets();
+    wMode.value = next;
     applyModeSize(false);
     refreshInfo();
     refreshRows();
@@ -6285,7 +6345,12 @@ function setup(node) {
     normalizeCanvasWidget(wHeight);
     applyModeSize();
   });
-  onWidget(wMode, () => applyModeSize());
+  onWidget(wMode, () => {
+    // 切进「自定义尺寸」时先把画布宽高对齐当前画布：画布不会因为旧数字被顶回去。
+    // 自定义尺寸下这两个数字本来就等于画布，所以重复选中时这一步是空操作。
+    if (String(wMode?.value ?? MODE_CUSTOM) === MODE_CUSTOM) alignCustomWidgets();
+    applyModeSize();
+  });
   onWidget(wAspect, () => applyModeSize());
   onWidget(wPropW, () => applyModeSize());
   onWidget(wPropH, () => applyModeSize());
@@ -7950,6 +8015,101 @@ function setup(node) {
     node.graph?.setDirtyCanvas?.(true, true);
   };
 
+  // ---------------------------------------------------------------- 虚拟节点（获取点 / 设置点）
+  // Easy-Use 的「设置点」「获取点」是纯前端的中转节点：获取点身上只有一个变量名，
+  // 真正的文本在「设置点的输入口」那边。这里顺着变量名把来源找出来再读，
+  // 这样不管中间隔了几层中转，画布都能拿到真正的内容。
+  const VIRTUAL_GET_RE = /(^|[\s._-])getnode$/i;
+  const VIRTUAL_SET_RE = /(^|[\s._-])setnode$/i;
+  const typeOfNode = (item) => String(item?.type ?? item?.comfyClass ?? "");
+  const isVirtualGet = (item) => !!item && VIRTUAL_GET_RE.test(typeOfNode(item));
+  const isVirtualSet = (item) => !!item && VIRTUAL_SET_RE.test(typeOfNode(item));
+  const graphOfNode = (item) => item?.graph || node.graph || app.graph || null;
+  const virtualVarName = (item) => {
+    const widgets = Array.isArray(item?.widgets) ? item.widgets : [];
+    const named = widgets.find((child) =>
+      /^(constant|常量|变量名|变量|variable|name|key)$/i.test(String(child?.name || "").trim()));
+    const pick = named || widgets.find((child) => typeof child?.value === "string");
+    return pick ? String(pick.value ?? "").trim() : "";
+  };
+  // 获取点 → 同名的设置点（Easy-Use 自己实现了 findSetter，优先用它，免得我们猜错）
+  const findVirtualSetter = (getter) => {
+    const graph = graphOfNode(getter);
+    if (!graph) return null;
+    if (typeof getter.findSetter === "function") {
+      try {
+        const found = getter.findSetter(graph);
+        if (found) return found;
+      } catch (error) {
+        console.warn("[MOSS YXBOX] 获取点找设置点失败", error);
+      }
+    }
+    const name = virtualVarName(getter);
+    if (!name) return null;
+    const pool = graph._nodes || graph.nodes || [];
+    return pool.find((other) =>
+      other !== getter && isVirtualSet(other) && virtualVarName(other) === name) || null;
+  };
+  // 节点第一个接着线的输入口，来自哪个节点
+  const linkedOriginNode = (item) => {
+    const graph = graphOfNode(item);
+    const inputs = Array.isArray(item?.inputs) ? item.inputs : [];
+    const input = inputs.find((slot) => slot && slot.link != null);
+    if (!graph || !input) return null;
+    const raw = input.link;
+    const id = typeof raw === "object" && raw ? (raw.origin_id ?? raw.originId) : graph.links?.[raw]?.origin_id;
+    if (id == null) return null;
+    return graph.getNodeById?.(id)
+      || (graph._nodes || graph.nodes || []).find((other) => Number(other?.id) === Number(id))
+      || null;
+  };
+  // 把「接口直接连的那个节点」换成「真正存着文本的节点」（最多追 4 层，防打转）
+  const resolveTextOrigin = (connected) => {
+    let current = connected;
+    const seen = new Set();
+    for (let hop = 0; hop < 4 && current; hop += 1) {
+      if (seen.has(current)) break;
+      seen.add(current);
+      if (isVirtualGet(current)) {
+        const setter = findVirtualSetter(current);
+        if (!setter) return { origin: current, reason: "get-without-setter" };
+        current = setter;
+        continue;
+      }
+      if (isVirtualSet(current)) {
+        const source = linkedOriginNode(current);
+        if (!source) return { origin: current, reason: "set-without-source" };
+        current = source;
+        continue;
+      }
+      return { origin: current, reason: "" };
+    }
+    return { origin: current, reason: connected ? "" : "no-origin" };
+  };
+  // 读不到 / 解析不了时的说明：同一个理由只提示一次，别每 120ms 弹一遍
+  let lastLayoutNote = "";
+  const noteLayout = (message) => {
+    const text = String(message || "");
+    if (text === lastLayoutNote) return;
+    lastLayoutNote = text;
+    if (!text) return;
+    try {
+      (state.showToast || showToast)(`布局提示词输入：${text}`);
+    } catch (_error) {
+      // toast 还没建完也无所谓，控制台里还有 warn
+    }
+  };
+  const layoutNoteForReason = () => {
+    if (lastTextOrigin.reason === "get-without-setter") {
+      return "接口接的是「获取点」，但工作流里没有同名的「设置点」，读不到文本";
+    }
+    if (lastTextOrigin.reason === "set-without-source") {
+      return "接口接的是「设置点」，但它的输入口没接线，读不到文本";
+    }
+    if (lastTextOrigin.reason === "no-origin") return "接口的连线找不到来源节点，读不到文本";
+    return "读不到上游文本（那个节点身上没有文本，也没有这一轮的文本输出）";
+  };
+
   // 取上游文本：优先读上游节点自己的文本控件（边打字边变，最实时），
   // 读不到再退到执行结果里的 STRING 输出（比如某个节点算出来的文本）
   const upstreamLayoutText = () => {
@@ -7957,7 +8117,16 @@ function setup(node) {
     if (!slot || slot.link == null) return null;
     const originId = linkOriginId(slot);
     if (originId == null) return null;
-    const origin = (node.graph || app.graph)?.getNodeById?.(originId);
+    const connected = (node.graph || app.graph)?.getNodeById?.(originId) || null;
+    // 中间隔着「获取点 / 设置点」时，先把来源换成真正存文本的那个节点
+    const resolved = resolveTextOrigin(connected);
+    const origin = resolved.origin || connected;
+    const textOriginId = Number(origin?.id ?? originId);
+    lastTextOrigin = {
+      reason: resolved.reason || "",
+      label: String(origin?.title || origin?.type || ""),
+      type: typeOfNode(origin),
+    };
     const isTextWidget = (item) => {
       const type = String(item?.type || "").toLowerCase();
       if (["number", "toggle", "combo", "button", "slider"].includes(type)) return false;
@@ -7967,7 +8136,7 @@ function setup(node) {
     };
     const readOutputValue = (keys) => {
       const pools = [];
-      const live = app.nodeOutputs?.[originId];
+      const live = app.nodeOutputs?.[textOriginId];
       if (live && typeof live === "object") pools.push(live);
       if (origin?.outputs && typeof origin.outputs === "object") pools.push(origin.outputs);
       for (const pool of pools) {
@@ -8033,7 +8202,8 @@ function setup(node) {
         (String(item.value).length > String(best.value).length ? item : best)).value;
     }
     // 4) 最后退回执行结果里的纯文本输出
-    return readOutputValue(["text", "string", "STRING"]);
+    // 有些节点（比如「展示任何」）的文本输出就叫 output / anything，这里一并兜住
+    return readOutputValue(["text", "string", "STRING", "output", "anything", "value"]);
   };
 
   // 和 openImport 走同一个解析器；区别是这里按「当前画布」等比缩放，不反过来改画布尺寸
@@ -8117,6 +8287,8 @@ function setup(node) {
   // 上游刚接上还没跑、或者上游节点报错没产出文本时读到的也是空串，
   // 那时候绝不能把用户自己画的框清掉（否则一点运行画布就空了、输出也跟着空）。
   let lastLayoutHadText = false;
+  // 最近一次读文本时的来源信息（读不到 / 解析不了时用来提示到底卡在哪）
+  let lastTextOrigin = { reason: "", label: "", type: "" };
   const syncLayoutSocket = () => {
     // 先清掉旧工作流留下的重复槽位，保证下面拿到的是真正接着线的那一个
     normalizeLayoutInputs();
@@ -8125,10 +8297,16 @@ function setup(node) {
       lastLayoutText = null;
       lastLayoutOk = false;
       lastLayoutHadText = false;
+      lastTextOrigin = { reason: "", label: "", type: "" };
+      noteLayout("");
       return;
     }
     const text = upstreamLayoutText();
-    if (text == null) return;
+    if (text == null) {
+      noteLayout(layoutNoteForReason());
+      return;
+    }
+    noteLayout("");
     if (text === lastLayoutText) {
       // 上一次没导入成功就过一会儿再试，成功了就不重复干活
       if (lastLayoutOk || Date.now() - lastLayoutTry < 1200) return;
@@ -8148,6 +8326,11 @@ function setup(node) {
     lastLayoutHadText = true;
     lastLayoutText = text;
     lastLayoutOk = applyLayoutText(text);
+    if (!lastLayoutOk) {
+      noteLayout(lastTextOrigin.reason
+        ? layoutNoteForReason()
+        : `读到「${lastTextOrigin.label || "上游"}」的内容，但不是能识别的布局或描述`);
+    }
   };
 
   // 上游一执行完就立刻再同步一次：同一轮里本节点可能先跑（于是读到上游上一轮的
@@ -8165,7 +8348,12 @@ function setup(node) {
       const ids = [detail.node, detail.display_node]
         .filter((id) => id != null)
         .map((id) => String(id));
-      if (!ids.includes(String(origin))) return;
+      // 中间隔着获取点 / 设置点时，真正执行的是被转接的那个节点，所以两边都认
+      const connected = (node.graph || app.graph)?.getNodeById?.(origin) || null;
+      const realOrigin = resolveTextOrigin(connected)?.origin?.id ?? null;
+      const looks = ids.includes(String(origin))
+        || (realOrigin != null && ids.includes(String(realOrigin)));
+      if (!looks) return;
       syncLayoutSocket();
     } catch (error) {
       console.warn("[MOSS YXBOX] 上游执行后同步布局失败", error);

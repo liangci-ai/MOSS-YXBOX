@@ -958,8 +958,8 @@ class MOSS_YXBOX:
                     "default": MODE_CUSTOM,
                     "tooltip": "画布（最终出图）的尺寸从哪里取：\n"
                                "· 自定义尺寸 —— 用下面的「画布宽 / 画布高」，跟背景图无关。\n"
-                               "· 按缩放规则计算 —— 用「画布比例 + 画布缩放基准 + 画布缩放长度」算出一个固定尺寸，"
-                               "与你接了几张图无关。\n"
+                               "· 按缩放规则计算 —— 只靠「画布比例 + 画布缩放基准 + 画布缩放长度」算出画布尺寸，"
+                               "不要求先接图：只导入「原图」、甚至一张图都没接，改这几个参数画布也会立刻跟着变。\n"
                                "· 按导入原图的原始尺寸 —— 等于「导入原图」那张图的像素尺寸，精确到像素、不取整"
                                "（列表里有「原图」那一行才出现这一档）。\n"
                                "· 按背景图N的原始尺寸 —— 等于第 N 张背景图的原始像素尺寸（按取整倍数取最近值；"
@@ -1004,8 +1004,9 @@ class MOSS_YXBOX:
                                "· 长边 / 短边 —— 较长或较短的那条边等于该长度。\n"
                                "· 宽度 / 高度 —— 指定那条边等于该长度。\n"
                                "· 总像素(千像素) —— 宽 × 高 ≈ 该数值 × 1000。\n"
-                               "· 不缩放 —— 忽略「画布缩放长度」和比例，直接用第一张背景图的原始尺寸"
-                               "（仍按取整倍数取整）；没接背景图时退回「画布宽 / 画布高」。",
+                               "· 不缩放 —— 忽略「画布缩放长度」和比例，直接用基准图的原始尺寸"
+                               "（仍按取整倍数取整）。基准图＝列表里第一张已接上的背景图，没有就用「原图」；"
+                               "一张图都没有时退回「画布宽 / 画布高」。",
                 }),
                 "画布缩放长度": ("INT", {
                     "default": 1536, "min": 4, "max": 16384, "step": 1,
@@ -1110,14 +1111,18 @@ class MOSS_YXBOX:
         if data_w > 0 and data_h > 0:
             width, height = data_w, data_h
 
-        # 「布局提示词输入」接进来的布局 JSON：这一轮就用它编译，不依赖前端是否
-        # 已经把框导进画布（否则同一轮里会慢一拍，180 显示的是上一轮的布局）。
+        # 「布局提示词输入」只当兜底：画布上有内容就是画布说了算——用户看到的、
+        # 「后导入的那一个接口」真正生效的地方都是画布，`布局提示词` 与 `草稿JSON`
+        # 两个输出必须说的是同一张画布，不能一个认画布、一个认接口里的旧文本。
+        # 只有画布还完全空着（新节点、上游刚接上还没来得及实时导入）才用这段文本。
         socket_layout = _layout_from_text(布局提示词输入, width, height)
         if socket_layout:
             socket_caption, socket_boxes = socket_layout
-            if socket_boxes:
+            # 画布「框和描述都没有」才算空：这时整段文本还没被画布接收，框和描述一起兜底
+            canvas_empty = not boxes and not str(整体描述 or "").strip()
+            if canvas_empty and socket_boxes:
                 boxes = socket_boxes
-            if socket_caption:
+            if canvas_empty and socket_caption:
                 整体描述 = socket_caption
 
         # 列表里点「眼睛」隐藏的框：不画进预览、不参与布局提示词编译
@@ -1149,8 +1154,14 @@ class MOSS_YXBOX:
             # 每一项对应一个背景图输入；没有接图的位置是空数组
             ui["background_images"] = saved
 
-        # 草稿 JSON：不编译，保留画布宽高与第一象限（左下角原点）像素坐标
+        # 草稿 JSON：不编译，保留画布宽高与第一象限（左下角原点）像素坐标。
+        # 前置 / 后置提示词照样拼在前后：它和 `布局提示词` 一样是「一整段提示词」，
+        # 只是中间的布局换成了没编译的草稿格式，不能把画布上正显示的前后缀漏掉。
         draft_prompt = _layout_draft(整体描述, regions, width, height)
+        if prefix_text:
+            draft_prompt = prefix_text + "\n" + draft_prompt
+        if suffix_text:
+            draft_prompt = draft_prompt + "\n" + suffix_text
 
         return {
             "ui": ui,
