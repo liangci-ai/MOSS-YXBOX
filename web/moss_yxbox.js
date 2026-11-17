@@ -2,6 +2,23 @@ import { app } from "../../../scripts/app.js";
 
 const NODE_ID = "MOSS_YXBOX";
 
+// ---------------------------------------------------------------- 高度缓存（流畅性关键）
+// 前端每画一次节点都会走 arrange() → 本节点 DOM 控件的 computeSize()/getHeight()，
+// 也就是**每帧**问一次「你要多高」。原来这两个回调每次都去量 offsetHeight
+// （chrome 5 个元素 + 列表表头/标题 4 个元素），等于每帧强制同步重排一次整块界面；
+// 工作流里一有本节点，拖拽 / 缩放 / 切换标签都会被这种每帧重排拖慢。
+// 这里把「量出来的高度」缓存成纯数字：只有真正的布局变化（重排、换行、改尺寸）才重新量。
+// 变量与函数都放在模块最顶部，保证任何初始化顺序下调用都不会命中 TDZ。
+var chromeCacheAt = 0;
+var chromeCacheValue = 0;
+var desiredCacheAt = 0;
+var desiredCacheValue = 0;
+var HEIGHT_CACHE_MS = 400;
+function invalidateHeightCache() {
+  chromeCacheAt = 0;
+  desiredCacheAt = 0;
+}
+
 const TYPE_OBJ = "物体框";
 const TYPE_TEXT = "文字框";
 const TYPE_CHAR = "角色框";
@@ -242,7 +259,11 @@ const CSS = `
 .yx-head-btn:hover{background:#262b3f;border-color:#4d6cff;color:#e8ecff;}
 .yx-head-btn:active{background:#2f3757;}
 .yx-head-btn:focus-visible{outline:1px solid #4d6cff;}
-.yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;transition:background .12s,border-color .12s;}
+.yx-item{background:#1c1d24;border:1px solid #262833;border-radius:6px;padding:3px 4px;}
+  /* 行内容彼此独立：让浏览器把每一行当成独立的绘制块，缩放时不必整块重排/重绘 */
+  .yx-item-wrap{contain:layout style paint;content-visibility:auto;contain-intrinsic-size:auto 34px;}
+  /* 交互降级：拖动画布 / 缩放 / 拖动节点时，列表只是不参与光栅化，尺寸和位置都不变，松手立刻恢复 */
+  .yx-root.yx-lod .yx-table,.yx-root.yx-lod .yx-scroll,.yx-root.yx-lod .yx-prose-area{display:none;}
 .yx-item:hover{background:#23252f;border-color:#343848;}
 .yx-item.yx-sel{border-color:#3f78ff;background:#1f2330;}
 .yx-item.yx-sel:hover{background:#242a3c;}
@@ -417,7 +438,62 @@ function el(tag, cls, text) {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
   if (text != null) node.textContent = text;
+  try { node.__yxOwn = true; } catch (_error) { /* 忽略 */ }
   return node;
+}
+
+// ---------------------------------------------------------------- 性能计时助手（临时，排查卡顿用）
+// 只累加数字，不改变任何行为；没有读数需求时这些函数几乎零开销。
+function __yxNow() {
+  try { return globalThis.performance.now(); } catch (_error) { return Date.now(); }
+}
+function __yxPerf() {
+  if (!globalThis.__yxPerfData) {
+    globalThis.__yxPerfData = { geo: 0, own: 0, longMs: 0, longCount: 0, frames: 0, calls: {}, ms: {} };
+  }
+  return globalThis.__yxPerfData;
+}
+function __yxAcc(name, ms) {
+  const data = __yxPerf();
+  data.calls[name] = (data.calls[name] || 0) + 1;
+  data.ms[name] = (data.ms[name] || 0) + ms;
+}
+// 合帧计数器：必须放在模块顶部（paint() 在初始化早期就会被调用，放中段会触发 const 的 TDZ）。
+const __yxPerfCalls = { paint: 0, draw: 0 };
+// 框内文字断行缓存：同一条描述、同一字号、同一可用宽度只排一次。
+const __yxWrapCache = new Map();
+function __yxWrapLines(c, text, maxW, fontSize) {
+  const key = fontSize + "|" + Math.round(maxW) + "|" + text;
+  const hit = __yxWrapCache.get(key);
+  if (hit) return hit;
+  const out = [];
+  for (const raw of String(text).split("\n")) {
+    let rest = raw;
+    while (rest) {
+      if (c.measureText(rest).width <= maxW) {
+        out.push(rest);
+        break;
+      }
+      // 二分找断点：原来是一个字一个字往回缩，长描述时会量几十万次
+      let lo = 1;
+      let hi = rest.length - 1;
+      let best = 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (c.measureText(rest.slice(0, mid)).width <= maxW) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      out.push(rest.slice(0, best));
+      rest = rest.slice(best);
+    }
+  }
+  if (__yxWrapCache.size > 200) __yxWrapCache.clear();
+  __yxWrapCache.set(key, out);
+  return out;
 }
 
 // 按「列位」往行里塞格子：遇到要竖线分隔的列位就先插一条 1px 的小列。
@@ -1580,7 +1656,10 @@ function setup(node) {
       return;
     }
     if (canClosest && target.closest(".yx-root")) return;
-    // 目标不在这个节点里（2.0 挡在命中之外时的表现）：按坐标兜底
+    // 目标不在这个节点里：先用纯算术判断指针是否落在这个节点上，
+    // 不在这就直接放过——别为了「可能落在列表上」每个滚轮事件都去 getBoundingClientRect。
+    if (pointOutsideNode(event)) return;
+    // 2.0 挡在命中之外时的表现：按坐标兜底
     const fallback = panelAtPoint(event);
     if (fallback) scrollListByWheel(fallback, event);
   };
@@ -1956,7 +2035,7 @@ function setup(node) {
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
   // 版本号不再写死在 JS 里（发版时最容易忘改）：先显示兜底串，随即向本插件后端
   // 的 /moss_yxbox/version 取「实际安装版本」覆盖它——改 pyproject.toml 后刷新页面即生效。
-  const STATUS_VERSION_FALLBACK = "1.0.7";
+  const STATUS_VERSION_FALLBACK = "1.0.8";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
@@ -2348,6 +2427,33 @@ function setup(node) {
     };
   };
 
+  // 画布几何缓存：paint() 里原来每次都要 getBoundingClientRect + 4 次 clientWidth/Height，
+  // 那是强制同步布局（拖动/载入时每秒几百次，直接掉帧）。这里只在尺寸真的可能变时才重读一次。
+  const stageMetrics = { cw: 0, ch: 0, k: 0, at: 0 };
+  let metricsDirty = true;
+  const refreshStageMetrics = () => {
+    stageMetrics.cw = Math.max(1, canvas.clientWidth || 1);
+    stageMetrics.ch = Math.max(1, canvas.clientHeight || 1);
+    stageMetrics.k = Number(node?.graph?.canvas?.ds?.scale) || 1;
+    stageMetrics.at = Date.now();
+    metricsDirty = false;
+    return stageMetrics;
+  };
+  // 只读缓存的几何：paint/绘制专用，不做任何 DOM 测量
+  const paintGeo = () => {
+    const m = metricsDirty || !stageMetrics.at ? refreshStageMetrics() : stageMetrics;
+    const cw = m.cw || 1;
+    const ch = m.ch || 1;
+    const k = m.k || 1;
+    const fit = Math.min(cw / S.width, ch / S.height) || 1;
+    const scale = fit * (state.zoom || 1);
+    return {
+      rect: null, cw, ch, k, fit, scale,
+      ox: (cw - S.width * scale) / 2 + (state.panX || 0),
+      oy: (ch - S.height * scale) / 2 + (state.panY || 0),
+    };
+  };
+
   const eventPoint = (event) => {
     const g = geo();
     // 先把鼠标的视觉坐标换算回布局像素，再减去画布内偏移
@@ -2361,6 +2467,8 @@ function setup(node) {
   // 调试/自测钩子：控制台里可直接调用换算与重绘
   state.eventPointForTest = eventPoint;
   state.paint = () => paint();
+  state.paintSync = () => paintSync();
+  state.perfCalls = __yxPerfCalls;
   state.geo = geo;
   state.viewScale = viewScale;
 
@@ -3872,6 +3980,8 @@ function setup(node) {
   }
 
   function refreshRows() {
+    invalidateHeightCache();
+    const __yxT0 = __yxNow();
     // 背景图 / 原图有没有变动，决定「画布尺寸来源」下拉里有哪些选项
     syncSizeModeOptions();
     // 任何时候画列表，都先确认每个对象都有编号：一旦编上就跟着对象走，永不改号
@@ -3922,6 +4032,7 @@ function setup(node) {
       refreshInfo();
       state.syncBar?.();
       paint();
+      __yxAcc("refreshRows", __yxNow() - __yxT0);
       return;
     }
     rows.textContent = "";
@@ -3944,6 +4055,7 @@ function setup(node) {
     state.syncBar?.();
     // 行数变了：重新量一遍列表高度，多了就出滚动条（layout 还没就绪时跳过）
     if (state.layoutReady) layout();
+    __yxAcc("refreshRows", __yxNow() - __yxT0);
   }
 
   // 编号重排：按当前列表顺序重排成 01…/B1…
@@ -4036,6 +4148,7 @@ function setup(node) {
 
   // 量一遍真实行高：行是固定结构（下拉框 26px + 上下 padding + 边框），量一次就够
   const measureRowHeights = () => {
+    if (state.lodOn) return false;
     let changed = false;
     try {
       const bgH = Number(firstRow(bgRows)?.offsetHeight) || 0;
@@ -4071,13 +4184,17 @@ function setup(node) {
 
   // 列表总高度 = 背景图区标题 + 背景图区面板 + 绘框区标题 + 绘框区面板
   const listSections = () => {
+    // 交互期间列表是隐藏的，沿用上一次量到的值，别把 0 写进高度缓存
+    if (state.lodOn && state.lodSections > 0) return state.lodSections;
     const parts = [];
     if (bgRowCount() > 0) {
       parts.push(groupHeight(bgTitle), panelHeight(bgHead, bgRowCount(), bgShowRows(), bgRowHeight()));
     }
     parts.push(groupHeight(boxTitle), panelHeight(tableHead, boxRowCount(), boxShowRows(), boxRowHeight()));
     const sum = parts.reduce((total, value) => total + value, 0);
-    return Math.round(8 + sum + (parts.length - 1) * LIST_GAP);
+    const total = Math.round(8 + sum + (parts.length - 1) * LIST_GAP);
+    state.lodSections = total;
+    return total;
   };
   // 把两个分区的行全部露出来需要的高度
   const listNeeded = () => {
@@ -4117,6 +4234,9 @@ function setup(node) {
   // 整块 DOM 界面需要的高度 = 顶部按钮行 + 工具条 + 画布 + 列表（全部是定值，杜绝互相拉扯）
   // chrome 只量顶部两条小按钮行（它们的高度只由文字决定，跟画布/列表无关，量了也不会回路）
   const chromeHeight = () => {
+    const now = Date.now();
+    if (chromeCacheAt && now - chromeCacheAt < HEIGHT_CACHE_MS && chromeCacheValue > 20) return chromeCacheValue;
+    if (state.lodOn && chromeCacheValue > 20) return chromeCacheValue;
     const heights = [];
     try {
       for (const item of [topBar, head, toolsRow, tableBar, statusBar]) heights.push(Number(item?.offsetHeight) || 0);
@@ -4125,7 +4245,9 @@ function setup(node) {
     }
     const measured = heights.reduce((sum, value) => sum + value, 0);
     // 量不到（还没挂到 DOM）时按经验值；量到就把间距/内边距一并加足
-    return Math.round(measured > 20 ? measured + 38 : 92);
+    chromeCacheValue = Math.round(measured > 20 ? measured + 38 : 92);
+    chromeCacheAt = now;
+    return chromeCacheValue;
   };
 
   // 「显示行数」档时整块界面的高度 —— 也是节点能缩到的最小高度
@@ -4144,7 +4266,14 @@ function setup(node) {
   const listHeight = () => Math.round(listBaseline());
 
   // 整块 DOM 界面的实际高度（列表按当前显示上限算，画布按理想高度 + 拉长多出来的空间）
-  const domDesiredHeight = () => Math.round(stageHeight() + listHeight() + chromeHeight() + proseTotalHeight() + 38);
+  const domDesiredHeight = () => {
+    const now = Date.now();
+    if (desiredCacheAt && now - desiredCacheAt < HEIGHT_CACHE_MS) return desiredCacheValue;
+    if (state.lodOn && desiredCacheValue > 0) return desiredCacheValue;
+    desiredCacheValue = Math.round(stageHeight() + listHeight() + chromeHeight() + proseTotalHeight() + 38);
+    desiredCacheAt = now;
+    return desiredCacheValue;
+  };
 
   // ComfyUI 两套前端（经典画布 / Nodes 2.0）都读这个高度：
   // 2.0 走 computeLayoutSize / --comfy-widget-min-height，经典画布走 computeSize 与元素自身高度
@@ -4282,6 +4411,14 @@ function setup(node) {
   };
 
   const layout = () => {
+    // 交互降级期间元素是 display:none，量出来的高度全是 0，会把缓存写坏。
+    // 这时只记一个待办，等松手（LOD 关闭）再统一排一次。
+    if (state.lodOn) {
+      state.lodPending = true;
+      return;
+    }
+    invalidateHeightCache();
+    metricsDirty = true;
     // 画布宽高的数字控件可能晚于这里才挂到 DOM 上（2.0 还会重建输入框），
     // 每次布局都强制重写一遍箭头步长，保证「倍数改了箭头立刻按新步长走」
     syncCanvasStep(true);
@@ -4370,9 +4507,58 @@ function setup(node) {
   };
 
   // ---------------------------------------------------------------- drawing
+  // 重绘合帧：一帧内几十次 paint() 只会真绘一次。拖动、载入、批量改数据时
+  // 以前是「每次改都同步重绘」，一次重绘上百毫秒就直接把界面拖死。
+  // 退出交互降级：恢复显示，并把交互期间攒下的布局补上（一次就好）
+  const resumeFromLod = () => {
+    if (!state.lodOn && !state.lodPending) return;
+    state.lodOn = false;
+    try {
+      root.classList.remove("yx-lod");
+    } catch (error) {
+      // 忽略
+    }
+    invalidateHeightCache();
+    if (state.lodPending) {
+      state.lodPending = false;
+      try {
+        layout();
+      } catch (error) {
+        // 忽略
+      }
+    }
+  };
+  state.lodResume = () => resumeFromLod();
+
+  let paintRaf = 0;
+  let paintDirty = false;
+  function paintSync() {
+    paintDirty = false;
+    if (paintRaf) {
+      const id = paintRaf;
+      paintRaf = 0;
+      try { cancelAnimationFrame(id); } catch (error) {}
+    }
+    paintNow();
+  }
   function paint() {
+    paintDirty = true;
+    __yxPerfCalls.paint += 1;
+    if (paintRaf) return;
+    paintRaf = requestAnimationFrame(() => {
+      paintRaf = 0;
+      if (!paintDirty) return;
+      paintDirty = false;
+      paintNow();
+    });
+  }
+  function paintNow() {
     if (!ctx) return;
-    const g = geo();
+    __yxPerfCalls.draw += 1;
+    const __yxT0 = __yxNow();
+    const g = paintGeo();
+    const __yxTG = __yxNow();
+    __yxAcc("paint.geo", __yxTG - __yxT0);
     const dpr = window.devicePixelRatio || 1;
     // 背板分辨率按「视觉像素」给足（工作流放大时也清晰），但绘制坐标系统一用布局像素，
     // 于是 q = 背板像素 / 布局像素；上限 4096 防止放大过头把显存打爆。
@@ -4386,6 +4572,10 @@ function setup(node) {
     if (canvas.width !== bw || canvas.height !== bh) {
       canvas.width = bw;
       canvas.height = bh;
+    }
+    {
+      const __yxT = __yxNow();
+      __yxAcc("paint.alloc", __yxT - __yxTG);
     }
     const q = bw / g.cw || dpr;
     ctx.setTransform(q, 0, 0, q, 0, 0);
@@ -4423,6 +4613,10 @@ function setup(node) {
       drawTag(ctx, tag, left + bg.x * g.scale, top + bg.y * g.scale, itemColor(bg));
     }
     ctx.restore();
+    {
+      const __yxT = __yxNow();
+      __yxAcc("paint.bg", __yxT - __yxTG);
+    }
 
     ctx.save();
     ctx.beginPath();
@@ -4436,6 +4630,11 @@ function setup(node) {
     if (state.grid !== false) drawGrid(ctx, g, left, top, cw, chh);
     if (state.axes !== false) drawAxes(ctx, g, left, top, cw, chh);
     
+
+    {
+      const __yxT = __yxNow();
+      __yxAcc("paint.grid", __yxT - __yxTG);
+    }
 
     // 框：列表越靠上 = 越上层，所以从后往前画
     for (let i = S.boxes.length - 1; i >= 0; i -= 1) {
@@ -4460,11 +4659,17 @@ function setup(node) {
 
     ctx.restore();
 
+    {
+      const __yxT = __yxNow();
+      __yxAcc("paint.box", __yxT - __yxTG);
+    }
+
     // 画布边框
     ctx.strokeStyle = "rgba(255,255,255,0.16)";
     ctx.lineWidth = 1;
     ctx.strokeRect(left + 0.5, top + 0.5, cw - 1, chh - 1);
 
+    __yxAcc("paint", __yxNow() - __yxT0);
     // 底部状态栏跟着画布一起刷新（内部有字符串比较，重复调用不写 DOM）
     state.updateStatus?.();
   }
@@ -4770,16 +4975,11 @@ function setup(node) {
       c.textBaseline = "top";
       // 从编号牌子下沿再留 4px 开始排，避免牌子变大后把第一行文字的上半截裁掉
       let ty = Math.round(y + tagH + 4);
-      for (const line of lines) {
-        const text = String(line);
-        let rest = text;
-        while (rest && ty < y + h - 2) {
-          let cut = rest.length;
-          while (cut > 1 && c.measureText(rest.slice(0, cut)).width > w - 8) cut -= 1;
-          c.fillText(rest.slice(0, cut), x + 4, ty);
-          rest = rest.slice(cut);
-          ty += lineHeight;
-        }
+      const wrapped = __yxWrapLines(c, lines.join("\n"), Math.max(4, w - 8), fontSize);
+      for (const line of wrapped) {
+        if (ty >= y + h - 2) break;
+        c.fillText(line, x + 4, ty);
+        ty += lineHeight;
       }
       c.restore();
     }
@@ -5388,11 +5588,57 @@ function setup(node) {
 
   // 挂在 window 的捕获阶段：ComfyUI 自己的滚轮处理（图缩放）会比画布冒泡更早拿到事件，
   // 只有抢在捕获阶段处理，滚轮缩放才不会被前端吞掉。
+  // 节点的屏幕矩形：用画布的缩放/位移（纯数字）算，不读 DOM 几何。
+  // 只作「粗筛」用——指针明显不在这个节点上时，滚轮事件直接放过。
+  let graphCanvasRectCache = null;
+  const graphCanvasRect = () => {
+    try {
+      const el = node?.graph?.canvas?.canvas;
+      if (!el || typeof el.getBoundingClientRect !== "function") return null;
+      const now = Date.now();
+      if (graphCanvasRectCache && now - graphCanvasRectCache.at < 500) return graphCanvasRectCache.rect;
+      const rect = el.getBoundingClientRect();
+      graphCanvasRectCache = { at: now, rect: { left: Number(rect.left) || 0, top: Number(rect.top) || 0 } };
+      return graphCanvasRectCache.rect;
+    } catch (_error) {
+      return null;
+    }
+  };
+  const nodeScreenRect = () => {
+    try {
+      const ds = node?.graph?.canvas?.ds;
+      const base = graphCanvasRect();
+      if (!ds || !base || !node?.pos || !node?.size) return null;
+      const scale = Number(ds.scale) || 1;
+      const ox = Number(ds.offset?.[0]) || 0;
+      const oy = Number(ds.offset?.[1]) || 0;
+      const left = base.left + (Number(node.pos[0]) + ox) * scale;
+      const top = base.top + (Number(node.pos[1]) + oy) * scale;
+      const right = left + (Number(node.size[0]) || 0) * scale;
+      const bottom = top + (Number(node.size[1]) || 0) * scale;
+      if (!(right > left && bottom > top)) return null;
+      // 留一圈余量：宁可多做一次精确判断，也不要误把节点内的滚轮放走
+      const pad = 24;
+      return { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
+    } catch (_error) {
+      return null;
+    }
+  };
+  const pointOutsideNode = (event) => {
+    const rect = nodeScreenRect();
+    if (!rect) return false;
+    const x = Number(event.clientX) || 0;
+    const y = Number(event.clientY) || 0;
+    return x < rect.left || x > rect.right || y < rect.top || y > rect.bottom;
+  };
+
   const onWheelZoom = (event) => {
     if (event.__yxZoomed) return;
     if (state.modal) return;
     const target = event.target;
     if (target && target.closest && target.closest(".yx-list,.yx-modal,textarea,input,select")) return;
+    // 粗筛：指针不在这个节点附近就直接放过（此时不需要任何 DOM 测量）
+    if (pointOutsideNode(event)) return;
     const rect = stage.getBoundingClientRect ? stage.getBoundingClientRect() : null;
     if (!rect) return;
     if (event.clientX < rect.left || event.clientX > rect.right
@@ -5631,14 +5877,52 @@ function setup(node) {
     return null;
   };
 
+  // 已解码图片缓存：切走再切回同一个工作流时，同一张背景图不必重新下载 + 解码一次。
+  // 只留最近 6 张，避免把大图堆在内存里。
+  const imageCache = new Map();
+  const cacheImage = (url, image) => {
+    try {
+      // 临时文件（同一轮换一张图）不进缓存，避免下次同名却显示旧图
+      if (!url || /(^|[\\/])(temp|comfy\.bboxes\.background_temp)/i.test(String(url))) return;
+      imageCache.set(url, image);
+      while (imageCache.size > 6) {
+        const oldest = imageCache.keys().next();
+        if (oldest.done) break;
+        imageCache.delete(oldest.value);
+      }
+    } catch (error) {
+      // 忽略
+    }
+  };
   const loadImage = (url) => new Promise((resolve) => {
+    try {
+      const hit = url ? imageCache.get(url) : null;
+      if (hit) {
+        resolve(hit);
+        return;
+      }
+    } catch (error) {
+      // 忽略
+    }
     if (!url) {
       resolve(null);
       return;
     }
     const image = new Image();
     image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
+    // 让浏览器把解码丢到别的线程：载入工作流时一次贴好几张大图，同步解码会直接卡住界面
+    try { image.decoding = "async"; } catch (error) {}
+    image.onload = () => {
+      const done = () => {
+        cacheImage(url, image);
+        resolve(image);
+      };
+      if (typeof image.decode === "function") {
+        image.decode().then(done, done);
+      } else {
+        done();
+      }
+    };
     image.onerror = () => resolve(null);
     image.src = url;
   });
@@ -6233,6 +6517,7 @@ function setup(node) {
 
   const originalConfigure = node.onConfigure;
   node.onConfigure = function (info) {
+    const __yxT0 = (globalThis.performance?.now?.() || Date.now());
     const result = originalConfigure?.call?.(this, info);
     try {
       configure(info);
@@ -6242,6 +6527,13 @@ function setup(node) {
       fitNodeInitial();
     } catch (error) {
       console.error("[MOSS YXBOX] 恢复画布数据失败", error);
+    }
+    try {
+      const ms = (globalThis.performance?.now?.() || Date.now()) - __yxT0;
+      state.perfConfigureMs = Math.round(ms);
+      if (state.yxPerf) state.yxPerf.configureMs = Math.round(ms);
+    } catch (_error) {
+      // 忽略
     }
     return result;
   };
@@ -6465,8 +6757,18 @@ function setup(node) {
     if (probeDue) {
       lastProbeAt = nowTick;
       width = Math.round(stage.clientWidth || 0);
-      const rect = canvas.getBoundingClientRect();
-      key = `${Math.round(rect.width)}x${Math.round(rect.height)}@${window.devicePixelRatio || 1}`;
+      // 缩放倍率直接读画布状态（纯数字），不再用 canvas.getBoundingClientRect()：
+      // 那个读法每秒 10 次强制同步重排，拖拽/缩放时会一直打断渲染，是掉帧来源之一。
+      const zoom = Number(node?.graph?.canvas?.ds?.scale) || 1;
+      // 顺手把画布几何缓存刷新掉，paint() 就不用自己去测（那里一测就是强制同步重排）
+      stageMetrics.cw = Math.max(1, stage.clientWidth || width || 1);
+      stageMetrics.ch = Math.max(1, stage.clientHeight || 1);
+      stageMetrics.k = zoom;
+      stageMetrics.at = nowTick;
+      metricsDirty = false;
+      const nodeW = Number(node?.size?.[0]) || width;
+      const nodeH = Number(node?.size?.[1]) || 0;
+      key = `${Math.round(nodeW * zoom)}x${Math.round(nodeH * zoom)}@${window.devicePixelRatio || 1}`;
     }
     // 「整体描述」对外只从我自己的 textarea 读，这里只做「外部改了原生值」时的回灌
     if (proseWidget) {
@@ -6482,15 +6784,19 @@ function setup(node) {
       }
     }
     // 节点被拉高 / 压回：列表的显示上限跟着变（只读取节点高度，不反推节点高度）
-    try {
-      const cap = listCap();
-      if (lastListCap < 0) {
-        lastListCap = cap;
-      } else if (cap !== lastListCap && scheduleListRelayout()) {
-        lastListCap = cap;
+    // 以前这里每帧都算一次 listCap，而它内部要读表头的 offsetHeight —— 等于每帧强制重排一次。
+    // 放到 100ms 的探测节拍里：肉眼无差别，去掉了每帧的那次同步重排。
+    if (probeDue) {
+      try {
+        const cap = listCap();
+        if (lastListCap < 0) {
+          lastListCap = cap;
+        } else if (cap !== lastListCap && scheduleListRelayout()) {
+          lastListCap = cap;
+        }
+      } catch (error) {
+        console.error("[MOSS YXBOX] 列表高度重排失败", error);
       }
-    } catch (error) {
-      console.error("[MOSS YXBOX] 列表高度重排失败", error);
     }
     // 只用「宽度」变化触发重排；不再看容器高度，否则改高度会反过来又触发重排，
     // 每帧在两个高度之间来回跳（表现就是整个节点上下抽搐）
@@ -6503,6 +6809,28 @@ function setup(node) {
         lastTickKey = key;
         scheduleZoomPaint();
       }
+    }
+    // 交互降级：缩放倍率 / 画布平移 / 节点位置一变，就说明用户正在拖拽或缩放，
+    // 这时列表（几百个输入框）不参与光栅化，松手 180ms 后自动恢复显示。
+    try {
+      const ds = node?.graph?.canvas?.ds;
+      const lodSig = `${ds?.scale}|${ds?.offset?.[0]}|${ds?.offset?.[1]}|${node?.pos?.[0]}|${node?.pos?.[1]}`;
+      if (!state.lodInit) {
+        // 刚建好 / 刚载入时先对齐一次状态，不触发降级，避免打开工作流时列表闪一下
+        state.lodInit = true;
+        state.lodSig = lodSig;
+      } else if (lodSig !== state.lodSig) {
+        state.lodSig = lodSig;
+        state.lodAt = Date.now();
+        if (!state.lodOn) {
+          state.lodOn = true;
+          root.classList.add("yx-lod");
+        }
+      } else if (state.lodOn && Date.now() - (state.lodAt || 0) > 180) {
+        resumeFromLod();
+      }
+    } catch (error) {
+      // 忽略
     }
     requestAnimationFrame(tick);
   };
@@ -9018,7 +9346,10 @@ function setup(node) {
     minWidth: 0,
   });
   domWidget.computeSize = function (width) {
-    return [Math.max(360, width || 520), Math.min(domDesiredHeight(), 1600)];
+    const __yxT0 = __yxNow();
+    const out = [Math.max(360, width || 520), Math.min(domDesiredHeight(), 1600)];
+    __yxAcc("computeSize", __yxNow() - __yxT0);
+    return out;
   };
 
   ensureBgInputs();
@@ -9048,9 +9379,137 @@ function setup(node) {
   state.refreshRows = refreshRows;
   state.applyModeSize = applyModeSize;
   state.applyCanvasSize = applyCanvasSize;
+  // ---------------------------------------------------------------- 临时性能读数（排查卡顿）
+  // 只在状态栏多显示一小段数字，不参与任何功能：
+  //   我读   = 每秒读取「本插件自己元素」几何属性的次数（这些读取会强制重排，是掉帧硬证据）
+  //   总读   = 每秒读取任何元素几何属性的次数（含 ComfyUI 自己的）
+  //   画/行/尺寸 = 每秒调用 paint / refreshRows / computeSize 的次数、合计毫秒
+  //   长任务 = 每秒超过 50ms 的阻塞次数、合计毫秒
+  //   恢复   = 载入工作流时本节点 onConfigure 的耗时
+  try {
+    const data = __yxPerf();
+    if (!globalThis.__yxGeoProbe) {
+      const probe = (globalThis.__yxGeoProbe = { installed: true });
+      const bump = (self) => {
+        const d = globalThis.__yxPerfData;
+        if (!d) return;
+        d.geo += 1;
+        if (self) d.own += 1;
+      };
+      const wrapGetter = (proto, name) => {
+        try {
+          const desc = Object.getOwnPropertyDescriptor(proto, name);
+          if (!desc || typeof desc.get !== "function") return;
+          Object.defineProperty(proto, name, {
+            configurable: true,
+            enumerable: desc.enumerable,
+            get() { bump(this && this.__yxOwn); return desc.get.call(this); },
+          });
+        } catch (_error) { /* 忽略 */ }
+      };
+      const htmlProto = globalThis.HTMLElement?.prototype;
+      if (htmlProto) {
+        for (const name of ["offsetHeight", "offsetWidth", "clientHeight", "clientWidth", "scrollHeight", "scrollWidth"]) wrapGetter(htmlProto, name);
+      }
+      try {
+        const proto = globalThis.Element?.prototype;
+        const orig = proto?.getBoundingClientRect;
+        if (typeof orig === "function") {
+          proto.getBoundingClientRect = function (...args) { bump(this && this.__yxOwn); return orig.apply(this, args); };
+        }
+      } catch (_error) { /* 忽略 */ }
+      try {
+        const Obs = globalThis.PerformanceObserver;
+        const d = globalThis.__yxPerfData;
+        if (Obs && d) {
+          const obs = new Obs((list) => {
+            for (const entry of list.getEntries()) {
+              d.longMs += Number(entry.duration) || 0;
+              d.longCount += 1;
+            }
+          });
+          obs.observe({ entryTypes: ["longtask"] });
+        }
+      } catch (_error) { /* 忽略 */ }
+      try {
+        const frame = () => {
+          const d = globalThis.__yxPerfData;
+          if (d) d.frames += 1;
+          globalThis.requestAnimationFrame(frame);
+        };
+        globalThis.requestAnimationFrame(frame);
+      } catch (_error) { /* 忽略 */ }
+    }
+
+    const perfSpan = el("span", "yx-sb-perf");
+    perfSpan.style.marginLeft = "8px";
+    perfSpan.style.whiteSpace = "nowrap";
+    perfSpan.style.opacity = "0.85";
+    perfSpan.style.fontFamily = "ui-monospace, Consolas, monospace";
+    statusBar.appendChild(perfSpan);
+    state.perfSpan = perfSpan;
+    state.yxPerf = data;
+    globalThis.__yxSpans = globalThis.__yxSpans || [];
+    if (!globalThis.__yxSpans.includes(perfSpan)) globalThis.__yxSpans.push(perfSpan);
+
+
+    if (!globalThis.__yxPerfTimer) {
+      const base = (globalThis.__yxPerfBase = { geo: 0, own: 0, longMs: 0, longCount: 0, frames: 0 });
+      const d0 = globalThis.__yxPerfData;
+      base.geo = d0.geo; base.own = d0.own; base.longMs = d0.longMs; base.longCount = d0.longCount; base.frames = d0.frames;
+      globalThis.__yxPerfTimer = setInterval(() => {
+        try {
+          const d = globalThis.__yxPerfData;
+          if (!d) return;
+          const one = (a, b) => Math.max(0, a - b);
+          const geo = one(d.geo, base.geo);
+          const own = one(d.own, base.own);
+          const longCount = one(d.longCount, base.longCount);
+          const longMs = Math.round(one(d.longMs, base.longMs));
+          const frames = one(d.frames, base.frames);
+          base.geo = d.geo; base.own = d.own; base.longCount = d.longCount; base.longMs = d.longMs; base.frames = d.frames;
+          const calls = { ...d.calls };
+          const ms = { ...d.ms };
+          d.calls = {}; d.ms = {};
+          const parts = [["背板", ms["paint.alloc"]], ["背景", ms["paint.bg"]], ["网格", ms["paint.grid"]], ["框", ms["paint.box"]], ["几何", ms["paint.geo"]]];
+          let topName = "";
+          let topMs = 0;
+          for (const [nm, val] of parts) {
+            const v = Number(val) || 0;
+            if (v > topMs) { topMs = v; topName = nm; }
+          }
+          const tail = topName ? `·最慢${topName}${Math.round(topMs)}ms` : "";
+          const text = `我读 ${own}/s · 总读 ${geo}/s · 画 ${calls.paint || 0}/${Math.round(ms.paint || 0)}ms${tail}`
+            + ` · 行 ${calls.refreshRows || 0}/${Math.round(ms.refreshRows || 0)}ms`
+            + ` · 尺寸 ${calls.computeSize || 0}/${Math.round(ms.computeSize || 0)}ms`
+            + ` · 长任务 ${longCount}次/${longMs}ms · ${frames}fps · 恢复 ${Math.round(d.configureMs || 0)}ms`;
+          globalThis.__yxLastPerf = text;
+          for (const span of globalThis.__yxSpans || []) {
+            if (span && span.isConnected !== false) span.textContent = text;
+          }
+        } catch (_error) { /* 忽略 */ }
+      }, 1000);
+    }
+  } catch (_error) {
+    // 读数本身失败不影响插件
+  }
+
   // 布局探针：只给自测脚本读数字用，不参与界面
   state.layoutProbe = {
     WIDGET_LABELS,
+    // 自测用：断行函数与「交互降级」开关（只读数字，不参与界面）
+    wrapLines: __yxWrapLines,
+    lod: () => ({ on: !!state.lodOn, pending: !!state.lodPending, sections: Number(state.lodSections) || 0 }),
+    setLod: (on) => {
+      if (on) {
+        state.lodOn = true;
+        try { root.classList.add("yx-lod"); } catch (error) { /* 忽略 */ }
+        state.lodSig = "probe";
+      } else {
+        resumeFromLod();
+      }
+      return !!state.lodOn;
+    },
     listNeeded, listBaseline, listCap, listHeight,
     baseTotalHeight, nodeBaseline, domDesiredHeight,
     stageBaseHeight, stageExtraHeight, stageHeight,
@@ -9074,7 +9533,7 @@ function setup(node) {
     modeBgNat, setSizeMode, normalizeSizeMode,
     prefixArea, suffixArea, setSideProse, syncSideValues, splitJsonOutside, composeFinalPrompt,
     proseTotalHeight, applySideHeights, scheduleSideCommit, proseBox, proseArea,
-    diagBtn, diagColor, hDivBtn, vDivBtn, hDivColor, vDivColor,
+    diagColor, hDivBtn, vDivBtn, hDivColor, vDivColor,
     scheduleSyncBackgrounds, syncBgBusy: () => !!state.bgSyncBusy,
     scheduleRestoredImageRefresh,
     bgList: () => S.bgs,
@@ -9092,6 +9551,7 @@ function setup(node) {
     syncSizeWidgets, LABEL_TO_TYPE,
     upstreamLayoutText, wMode,
     wAspect, aspectBgOf, aspectOptions, syncAspectOptions,
+    domDesiredHeight, chromeHeight, invalidateHeightCache,
     ASPECT_AUTO, ASPECT_SOURCE, ASPECT_LEGACY,
   };
   state.canvasStep = canvasStep;
