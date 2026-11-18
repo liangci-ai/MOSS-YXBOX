@@ -47,9 +47,13 @@ MOSS_YXBOX/
 ├── README.md
 ├── LICENSE
 ├── docs/
-│   └── preview.png     # README 顶部那张截图
+│   ├── preview.png     # README 顶部那张截图（节点本体）
+│   └── editor.png      # 提示词编辑库截图
 └── web/
-    └── moss_yxbox.js
+    ├── moss_yxbox.js
+    └── data/           # 内置 Tag 库与角色库数据（随插件分发）
+        ├── tags_cn.json
+        └── characters.json.gz
 ```
 
 也可以用 Manager 或在 `custom_nodes` 里执行：
