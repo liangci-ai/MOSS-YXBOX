@@ -337,6 +337,8 @@ const CSS = `
 /* 三组按钮各用一种颜色：布局提示词＝蓝、原图＝绿、预设＝琥珀 */
 .yx-chip.yx-act-layout{background:#16233a;border-color:#2f5f9e;color:#a9c4f2;}
 .yx-chip.yx-act-layout:hover{background:#1b2c48;border-color:#3f78ff;color:#e2ecff;}
+.yx-chip.yx-act-editor{margin-left:auto;background:#16233a;border-color:#2f5f9e;color:#a9c4f2;}
+.yx-chip.yx-act-editor:hover{background:#1b2c48;border-color:#3f78ff;color:#e2ecff;}
 .yx-chip.yx-act-image{background:#142c20;border-color:#2f7a4e;color:#a4dcb6;}
 .yx-chip.yx-act-image:hover{background:#183826;border-color:#3fa168;color:#dcf7e5;}
 .yx-chip.yx-act-preset{background:#2f240f;border-color:#87652a;color:#f0d8a6;}
@@ -1650,6 +1652,7 @@ function setup(node) {
       event.stopPropagation();
       return;
     }
+    if (canClosest && target.closest(".yx-editor,.yx-chat-box,.yx-set-box,.yx-tagact-box,.yx-pv-box,.yx-modal")) return;
     const panel = canClosest ? target.closest(".yx-scroll") : null;
     if (panel) {
       scrollListByWheel(panel, event);
@@ -1958,6 +1961,13 @@ function setup(node) {
   });
   state.redoBtn = redoBtn;
   tableBar.appendChild(redoBtn);
+  // 「提示词编辑库」：把框的「描述」「文字」拎到大窗口里集中编辑
+  const editorBtn = el("button", "yx-chip yx-act-editor", "打开提示词编辑库");
+  editorBtn.type = "button";
+  editorBtn.title = "打开提示词编辑库：集中编辑框的「描述」与「文字」，可按框切换、多选一起改 tag";
+  editorBtn.addEventListener("click", () => openPromptEditor());
+  state.editorBtn = editorBtn;
+  tableBar.appendChild(editorBtn);
 
   root.appendChild(tableBar);
 
@@ -2035,7 +2045,7 @@ function setup(node) {
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
   // 版本号不再写死在 JS 里（发版时最容易忘改）：先显示兜底串，随即向本插件后端
   // 的 /moss_yxbox/version 取「实际安装版本」覆盖它——改 pyproject.toml 后刷新页面即生效。
-  const STATUS_VERSION_FALLBACK = "1.0.8";
+  const STATUS_VERSION_FALLBACK = "1.0.9";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
@@ -2172,11 +2182,15 @@ function setup(node) {
     const bgs = selectedBgs();
     const head = el("div", "yx-menu-title");
     if (emptyOnly || !S.selected.size) {
-      // 没选中任何对象：只给一个「粘贴」入口，贴的是剪贴板里最后复制的那一个
+      // 没选中任何对象：给「粘贴」和「打开提示词编辑库」两个入口
       head.textContent = "未选中对象";
       menu.appendChild(head);
       menuItem(clipboardItem ? `粘贴“${clipboardLabel()}”（Ctrl+V）` : "粘贴（剪贴板是空的）", () => {
         if (pasteClipboard()) closeMenu();
+      });
+      menuItem("打开提示词编辑库", () => {
+        closeMenu();
+        openPromptEditor();
       });
       return;
     }
@@ -2184,6 +2198,10 @@ function setup(node) {
       ? (bgs.length ? "背景图" : "绘制框")
       : `已选中 ${S.selected.size} 个对象`;
     menu.appendChild(head);
+    menuItem("打开提示词编辑库", () => {
+      closeMenu();
+      openPromptEditor();
+    });
     // 菜单里显示的“对象名”，复制 / 复制并粘贴都用它
     const first = [...S.selected][0];
     const selLabel = itemLabel(first) + (S.selected.size > 1 ? ` 等 ${S.selected.size} 个` : "");
@@ -2347,6 +2365,8 @@ function setup(node) {
   };
   const onNodeKeyDown = (event) => {
     if (event.altKey) return;
+    if (state.editorOpen) return;   // 编辑库开着：Delete / Ctrl+C 这些留给编辑库自己处理
+    if (state.chatOpen) return;     // AI 对话开着：键盘操作留给输入框
     if (inTypingField()) return;   // 输入框里：交给浏览器/输入框自己处理
     const key = String(event.key || "");
     if (event.ctrlKey || event.metaKey) {
@@ -3473,6 +3493,11 @@ function setup(node) {
         if (locked(field)) return;
         box[field] = input.value;
         if (expand && document.activeElement !== expand) expand.value = input.value;
+        // 编辑库开着：节点上的改动只做预览，真正写入要等「应用并关闭」
+        if (state.editorOpen && globalThis.__yxEditorNodeEdited) {
+          globalThis.__yxEditorNodeEdited(box, field, input.value);
+          return;
+        }
         commit();
         paint();
       });
@@ -3980,6 +4005,7 @@ function setup(node) {
   }
 
   function refreshRows() {
+  try { if (globalThis.__yxEditorSyncFromNode) globalThis.__yxEditorSyncFromNode(); } catch (_error) { /* 忽略 */ }
     invalidateHeightCache();
     const __yxT0 = __yxNow();
     // 背景图 / 原图有没有变动，决定「画布尺寸来源」下拉里有哪些选项
@@ -4101,6 +4127,7 @@ function setup(node) {
   }
 
   const syncRows = () => {
+    try { if (globalThis.__yxEditorSyncFromNode) globalThis.__yxEditorSyncFromNode(); } catch (_error) { /* 忽略 */ }
     for (const row of S.rows.values()) row.__sync?.();
     state.syncBar?.();
   };
@@ -5081,7 +5108,11 @@ function setup(node) {
       if (box.type === TYPE_TEXT) box.text = ta.value;
       else box.desc = ta.value;
       syncRows();
-      commit();
+      if (state.editorOpen && globalThis.__yxEditorNodeEdited) {
+        globalThis.__yxEditorNodeEdited(box, box.type === TYPE_TEXT ? "text" : "desc", ta.value);
+      } else {
+        commit();
+      }
       paint();
     });
     ta.addEventListener("keydown", (event) => {
@@ -5636,7 +5667,7 @@ function setup(node) {
     if (event.__yxZoomed) return;
     if (state.modal) return;
     const target = event.target;
-    if (target && target.closest && target.closest(".yx-list,.yx-modal,textarea,input,select")) return;
+    if (target && target.closest && target.closest(".yx-list,.yx-modal,.yx-editor,.yx-chat-box,.yx-set-box,.yx-tagact-box,.yx-pv-box,textarea,input,select")) return;
     // 粗筛：指针不在这个节点附近就直接放过（此时不需要任何 DOM 测量）
     if (pointOutsideNode(event)) return;
     const rect = stage.getBoundingClientRect ? stage.getBoundingClientRect() : null;
@@ -6486,8 +6517,13 @@ function setup(node) {
     if (!transient) bg.url = url;
     bg.natW = image.naturalWidth || image.width || 0;
     bg.natH = image.naturalHeight || image.height || 0;
-    if (first) placeInitial(bg);
-    followImageCanvas(bg, first);
+    if (first) {
+      // 只有「这张图第一次接到这个槽位」才摆位置 / 重算画布；
+      // 运行结束时后端会回传一份临时拷件，那只用来刷新画面，
+      // 一旦重新摆位置，用户在画布上挪过、缩过的背景图就会被复位。
+      placeInitial(bg);
+      followImageCanvas(bg, first);
+    }
     refreshRows();
     layout();
     commit();
@@ -6715,10 +6751,20 @@ function setup(node) {
     if (Date.now() - lastLinkedSyncAt > 120) {
       lastLinkedSyncAt = Date.now();
       // 「布局提示词输入」接上文本后实时导入（文本没变就什么都不做）
-      try {
-        syncLayoutSocket();
-      } catch (error) {
-        console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
+      // 编辑库开着时跳过：否则上游一变就把正在预览的框顶掉
+      if (state.editorOpen) {
+        try {
+          editorPollSync();
+        } catch (error) {
+          /* 忽略 */
+        }
+      }
+      if (!state.editorOpen) {
+        try {
+          syncLayoutSocket();
+        } catch (error) {
+          console.error("[MOSS YXBOX] 布局提示词输入同步失败", error);
+        }
       }
       // 旧渲染把隐藏控件画成的小圆点：工作流加载完再补几次清理
       try {
@@ -8699,7 +8745,55 @@ function setup(node) {
   // ---------------------------------------------------------------- 预设（保存 / 管理 / 加载）
   const PRESET_KEY = "moss-yxbox-presets-v1";
   const presetUID = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  const readStore = () => {
+  // ---- 用户数据存档（预设）：优先写 <ComfyUI>/user/default/moss_yxbox/presets.json
+  // 浏览器 localStorage 只当镜像与兜底：换端口、换浏览器、清缓存、更新插件都不会丢预设。
+  const STORE_URL = (name) => `/moss_yxbox/store/${name}`;
+  const storeCache = { presets: null };
+  let storeDirPath = "";
+  let presetPutTimer = 0;
+  let presetStorePromise = null;
+  const serverStoreGet = async (name) => {
+    try {
+      const api = globalThis.api;
+      const res = api && api.fetchApi ? await api.fetchApi(STORE_URL(name), { cache: "no-store" }) : null;
+      if (!res || !res.ok) return null;
+      const body = await res.json();
+      if (body && body.ok) {
+        if (body.dir) {
+          storeDirPath = String(body.dir);
+          state.storeDir = storeDirPath;
+        }
+        return body.data || null;
+      }
+    } catch (_error) {
+      // 没有后端存档接口（旧版本/纯前端环境）就退回 localStorage
+    }
+    return null;
+  };
+  const serverStorePut = async (name, data) => {
+    try {
+      const api = globalThis.api;
+      if (!api || !api.fetchApi) return false;
+      const res = await api.fetchApi(STORE_URL(name), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data }),
+      });
+      return Boolean(res && res.ok);
+    } catch (_error) {
+      return false;
+    }
+  };
+  // 读某一类存档（设置页的导出/备份用；直接走后端接口，不读内存缓存）
+  const storeCacheGet = (name) => serverStoreGet(name);
+  const queuePresetPut = () => {
+    if (presetPutTimer) clearTimeout(presetPutTimer);
+    presetPutTimer = setTimeout(() => {
+      presetPutTimer = 0;
+      if (storeCache.presets) serverStorePut("presets", storeCache.presets);
+    }, 250);
+  };
+  const readStoreFromLocal = () => {
     try {
       const raw = window.localStorage?.getItem(PRESET_KEY);
       const data = raw ? JSON.parse(raw) : null;
@@ -8711,14 +8805,47 @@ function setup(node) {
     }
     return { version: 1, folders: [], items: [] };
   };
+  const readStore = () => {
+    const cached = storeCache.presets;
+    if (cached && Array.isArray(cached.folders) && Array.isArray(cached.items)) return cached;
+    return readStoreFromLocal();
+  };
   const writeStore = (store) => {
+    storeCache.presets = store;
     try {
       window.localStorage?.setItem(PRESET_KEY, JSON.stringify(store));
-      return true;
     } catch (error) {
-      console.error("[MOSS YXBOX] 保存预设失败", error);
-      return false;
+      console.error("[MOSS YXBOX] 保存预设失败（浏览器本地），已改走用户目录", error);
     }
+    queuePresetPut();
+    return true;
+  };
+  // 首次加载：把用户目录里的预设读进内存；如果那边还是空的，就把浏览器里的旧预设迁过去
+  const loadPresetStore = () => {
+    if (presetStorePromise) return presetStorePromise;
+    presetStorePromise = (async () => {
+      const remote = await serverStoreGet("presets");
+      if (remote && Array.isArray(remote.folders) && Array.isArray(remote.items)) {
+        storeCache.presets = { version: 1, folders: remote.folders, items: remote.items };
+        try {
+          window.localStorage?.setItem(PRESET_KEY, JSON.stringify(storeCache.presets));
+        } catch (_error) {
+          // 镜像失败无所谓，用户目录才是准的
+        }
+        return storeCache.presets;
+      }
+      const local = readStoreFromLocal();
+      if (local.items.length || local.folders.length) {
+        storeCache.presets = local;
+        const ok = await serverStorePut("presets", local);
+        if (ok) {
+          const tip = `已把 ${local.items.length} 个旧预设迁移到用户目录`;
+          if (state.showToast) state.showToast(tip);
+        }
+      }
+      return storeCache.presets;
+    })();
+    return presetStorePromise;
   };
   const nextPresetName = (store) => {
     const used = new Set((store.items || []).map((item) => String(item.name)));
@@ -9496,9 +9623,241 @@ function setup(node) {
 
   // 布局探针：只给自测脚本读数字用，不参与界面
   state.layoutProbe = {
+    // 编辑库设置（自测用）
+    openEditorSettings: (tab) => {
+      if (tab) setState.tab = String(tab);
+      openEditorSettings();
+    },
+    tagLibRef: () => tagLib,
+    renderTagLib: () => { renderTagLib(); },
+    chatStateRef: () => chatState,
+    aiStoreRef: () => aiStore,
+    editorSettingsRows: () => {
+      const body = setState.dom && setState.dom.body;
+      const host = body && body.children && body.children[0];
+      return host && host.children ? host.children.length : 0;
+    },
+    editorSettingsText: () => {
+      const body = setState.dom && setState.dom.body;
+      return body ? String(body.textContent || "") : "";
+    },
+    closeEditorSettings: () => {
+      if (setState.dom && setState.dom.overlay) setState.dom.overlay.style.display = "none";
+    },
+    editorSettingsInfo: () => ({
+      open: !!(setState.dom && setState.dom.overlay.style.display !== "none"),
+      tab: setState.tab,
+      pos: editorState.pos ? { x: Math.round(Number(editorState.pos.x) || 0), y: Math.round(Number(editorState.pos.y) || 0) } : null,
+      tipOn: editorState.tipOn === true,
+      aiRows: setState.dom && setState.tab === "ai" ? (((setState.dom.body.children || [])[0] || {}).children || []).length : 0,
+    }),
+    // 提示词编辑库（自测用：只暴露入口与四个只读信息）
+    openEditor: () => openPromptEditor(),
+    closeEditor: (apply) => closePromptEditor(apply === true),
+    editorWrite: (key, value) => editorWriteField(String(key), String(value)),
+    tagInfo: () => ({
+      tab: tagLib.tab,
+      cat: tagLib.cat,
+      sub: tagLib.sub,
+      q: tagLib.q,
+      groups: tagLib.groups ? tagLib.groups.length : 0,
+      tags: tagLib.groups ? tagLib.groups.reduce((sum, g) => sum + (g.s || []).reduce((n, s) => n + (s.t || []).length, 0), 0) : 0,
+      chars: tagLib.chars ? tagLib.chars.length : 0,
+      matches: tagMatches().length,
+      error: tagLib.tagsError || tagLib.charsError || "",
+    }),
+    tagInsert: (tag) => editorInsertTag(tag),
+    editorType: (key, value) => {
+      const dom = editorState.dom;
+      const k = String(key) === "text" ? "text" : "desc";
+      const text = value === undefined || value === null ? "" : String(value);
+      if (dom && dom.areas && dom.areas[k]) dom.areas[k].value = text;
+      editorWriteField(k, text);
+      return text;
+    },
+    editorUndo: () => editorUndo(),
+    // 自测用：分类层删除连带、就地二次确认、新增弹窗字段数、库复制
+    collectSize: (key) => collectKeys(String(key || "")).length,
+    armConfirmTest: () => {
+      const btn = el("button", "yx-chip", "删除");
+      let ran = 0;
+      armConfirm(btn, () => { ran += 1; }, "确认删除");
+      btn.__yxArmed = false; // 模拟「第一次点击前」
+      const arm = () => { if (btn.__yxArmed && btn.__yxArmRun) { btn.__yxArmRun(); return true; } armConfirm(btn, () => { ran += 1; }, "确认删除"); return false; };
+      const first = arm();
+      const textAfterFirst = String(btn.textContent || "");
+      const ranAfterFirst = ran;
+      const second = arm();
+      const ranAfterSecond = ran;
+      btn.__yxArmed = false;
+      return { first, textAfterFirst, ranAfterFirst, second, ranAfterSecond };
+    },
+    openAddFields: (lib, cat, sub) => {
+      tagLibAddDialog(String(lib || "tags"), String(cat || ""), String(sub || ""));
+      const boxes = document.querySelectorAll ? [] : [];
+      const all = Array.from(document.body.children).filter((node) => node.className && String(node.className).indexOf("yx-modal") >= 0);
+      const last = all[all.length - 1];
+      let count = 0;
+      if (last) {
+        const walk = (node) => {
+          for (const child of Array.from(node.children || [])) {
+            if (child.className && String(child.className).indexOf("yx-set-input") >= 0) count += 1;
+            walk(child);
+          }
+        };
+        walk(last);
+        try { last.remove(); } catch (error) { /* 忽略 */ }
+      }
+      return count;
+    },
+    dupLib: (id) => {
+      const found = libById(String(id || ""));
+      if (!found) return -1;
+      const copy = libDeepCopy(found);
+      copy.id = "lib" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      tagOver.libs = tagOver.libs || [];
+      tagOver.libs.push(copy);
+      saveTagOver();
+      return tagOver.libs.length;
+    },
+    libNames: () => (tagOver.libs || []).map((lib) => String(lib.name || "")),
+    editorRedo: () => editorRedo(),
+    editorUndoDepth: () => editorState.undo.length,
+    tagSelCount: () => tagLibSel.size,
+    tagRowKeys: () => tagRows().map((row) => row.key),
+    tagSelMode: (on) => { tagLibSelectMode(!!on); return !!tagLib.selectMode; },
+    tagSelect: (key) => { tagLibToggleSelect(String(key)); return tagLibSel.size; },
+    charInsert: (name, series, app, cloth) => charInsertText({ tag: name, series, appearance: app, clothing: cloth }),
+    openBackup: () => { openTagBackup(); return true; },
+    tagOverRef: () => tagOver,
+    tagLv1Names: () => lv1List().map((item) => String(item.name || "")),
+    tagLv2Names: () => lv2List().map((item) => String(item.name || "")),
+    tagFavCount: () => tagLibFavList().length,
+    tagDelete: (key) => { tagLibDeleteKeys([String(key)]); return true; },
+    tagAddLib: (name, levels) => {
+      const lib = { id: "t" + String(Date.now() % 100000), name: String(name || "测试库"), levels: Math.max(1, Math.min(6, Number(levels) || 1)), cats: [], tags: [] };
+      if (!Array.isArray(tagOver.libs)) tagOver.libs = [];
+      tagOver.libs.push(lib);
+      libPick("lib:" + lib.id);
+      return lib.id;
+    },
+    multiOn: () => !!state.multi,
+    nodeEdited: (box, field, value) => { editorNodeEdited(box, field, String(value == null ? "" : value)); return true; },
+    nodeSyncFrom: () => { editorSyncFromNode(); return true; },
+    editorFieldValue: (key) => {
+      const dom = editorState.dom;
+      if (!dom || !dom.areas) return "";
+      const k = String(key) === "text" ? "text" : "desc";
+      return dom.areas[k] ? String(dom.areas[k].value || "") : "";
+    },
+    editorCheckedCount: () => editorState.checked.size,
+    editorSetChecked: (list) => {
+      const boxes = editorBoxes();
+      editorState.checked = new Set(boxes.filter((box) => list.includes(itemLabel(box))));
+      if (editorState.dom) {
+        renderEditorObjects();
+        editorUpdateCount();
+        editorLoadActive();
+      }
+      return editorState.checked.size;
+    },
+    tagCardActNames: () => { const out = []; const walk = (node2) => { if (!node2 || !node2.children) return; for (const kid of node2.children) { if (String(kid.className || "") === "yx-tag-act") out.push(String(kid.textContent || "")); walk(kid); } }; walk(document.body); return out; },
+    tagHoverActs: (key) => {
+      let row = tagRows().find((item2) => String(item2.key) === String(key));
+      if (!row) row = tagRows().find((item2) => String(item2.tag) === String(key));
+      if (!row) return [];
+      const fake = { getBoundingClientRect: () => ({ left: 20, top: 120, width: 120, height: 120 }) };
+      try { showTagActsFloat(row, fake); } catch (error) { return ["ERR:" + String(error && error.message || error)]; }
+      const bar = tagActsFloat;
+      const labels = bar ? (bar.children || []).map((kid) => String(kid.textContent || "")) : [];
+      hideTagActsFloat();
+      if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+      tagActsFloat = null;
+      return labels;
+    },
+    tagPreviewInfo: () => ({ on: !!previewStore.on, count: Object.keys(previewStore.map || {}).length, loaded: !!previewStore.loaded }),
+    tagPreviewName: (tag) => previewNameFor(tag),
+    tagPreviewSetOn: (on) => {
+      previewStore.on = !!on;
+      if (tagLib.dom) renderTagLib();
+      return !!previewStore.on;
+    },
+    chatInfo: () => {
+      const provider = activeProvider();
+      return {
+        providers: (aiStore.providers || []).length,
+        active: Number(aiStore.active) || 0,
+        model: String(provider.model || ""),
+        baseUrl: String(provider.baseUrl || ""),
+        messages: chatState.messages.length,
+        rounds: Number(aiStore.contextRounds) || 0,
+        attachments: (chatState.attachments || []).length,
+      };
+    },
+    chatBuildCount: (text) => chatBuildMessages(String(text || "")).length,
+    chatAttachSet: (atts) => {
+      chatState.attachments = Array.isArray(atts) ? atts.slice() : [];
+      renderChatAttachments();
+      return chatState.attachments.length;
+    },
+    chatAttachInfo: () => (chatState.attachments || []).map((a) => String(a && a.kind || "")),
+    chatComposeTest: (text, atts) => chatCompose(String(text || ""), Array.isArray(atts) ? atts : []),
+    chatOverlayDisplay: () => String((chatState.dom && chatState.dom.overlay && chatState.dom.overlay.style.display) || ""),
+    closeChat: () => {
+      if (chatState.dom && chatState.dom.overlay) chatState.dom.overlay.style.display = "none";
+      state.chatOpen = false;
+    },
+    openChat: () => { openChatModal(); return !!chatState.dom; },
+    chatSetBox: () => (chatState.dom && chatState.dom.setBox) || null,
+    chatSettingsOpen: (on) => {
+      chatState.setOpen = !!on;
+      renderChatSettings();
+      return !!chatState.setOpen;
+    },
+    tagSetTab: (tab) => { tagLib.tab = String(tab || "tags"); tagLib.sub = ""; tagLib.limit = 300; renderTagLib(); return tagLib.tab; },
+    tagSetQuery: (q) => { tagLib.q = String(q || ""); tagLib.limit = 300; renderTagLib(); return tagLib.q; },
+    tagListText: () => {
+      const dom = tagLib.dom;
+      if (!dom || !dom.list) return "";
+      return (dom.list.textContent || "").slice(0, 2000);
+    },
+    editorInfo: () => ({
+      open: !!editorState.open,
+      active: editorState.active ? itemLabel(editorState.active) : "",
+      checked: editorState.checked.size,
+      syncAll: !!editorState.syncAll,
+    }),
+    bkSnapshot: () => bkMakeSnapshot(),
+    bkPayloadNow: () => ({ v: 5, tagOver: tagOverPayload(), preview: { on: !!previewStore.on, map: Object.assign({}, previewStore.map || {}) }, images: {} }),
+    bkApply: (data) => bkApplyPayload(data),
     WIDGET_LABELS,
     // 自测用：断行函数与「交互降级」开关（只读数字，不参与界面）
     wrapLines: __yxWrapLines,
+    // 自测用：Tag 卡片分页状态（首屏 120，滚到底续渲染）
+    gridInfo: () => ({
+      shown: Number(tagLib.gridShown) || 0,
+      total: (tagLib.gridRows || []).length,
+      children: (tagLib.gridHost && tagLib.gridHost.children) ? tagLib.gridHost.children.length : 0,
+    }),
+    gridMore: () => { tagGridMore(); },
+    // 自测用：用 n 条假行验一遍分页（首屏 120、续渲染到全部）
+    // 自测用：备份快照形状 + 预览图清单（v6 默认不含图）
+    bkSnap: (withPreviews) => {
+      const snap = bkMakeSnapshot(withPreviews === true);
+      return { v: snap.v, files: snap.previewFiles ? snap.previewFiles.files.slice() : null, folder: snap.previewFiles ? snap.previewFiles.folder : "" };
+    },
+    bkSetPreviewMap: (obj) => { previewStore.map = Object.assign({}, obj || {}); },
+    gridPageTest: (n) => {
+      const total = Math.max(1, Number(n) || 1);
+      const host = el("div", "yx-tag-lv3");
+      const rows = [];
+      for (let i = 0; i < total; i += 1) rows.push({ key: "test|tag|" + i, tag: "t" + i, cn: "中" + i, kind: "tags", sub: "测试" });
+      paintTagCardGrid(rows, host);
+      const first = host.children.length;
+      let guard = 0;
+      while (host.children.length < total && guard < 200) { tagGridMore(); guard += 1; }
+      return { first, all: host.children.length, total };
+    },
     lod: () => ({ on: !!state.lodOn, pending: !!state.lodPending, sections: Number(state.lodSections) || 0 }),
     setLod: (on) => {
       if (on) {
@@ -9577,6 +9936,4552 @@ function setup(node) {
     if (state.boxRowsInput) state.boxRowsInput.value = String(state.boxShowRows);
     layout();
   };
+  // ---------------------------------------------------------------- 提示词编辑库（弹窗）
+  // 只编辑框的「描述」与「文字」；预览只改内存里的框对象，不写「画布数据」——
+  // 也就是画布上能立刻看到效果，但节点里存的还是旧内容；
+  // 点「应用并关闭」才 commit（只留一步撤销），直接关掉则把原值还原，什么都不留。
+  function boxKey(box) {
+  if (!box || typeof box !== "object") return "";
+  if (!box.__yxId) box.__yxId = "b" + Math.random().toString(36).slice(2, 8);
+  return box.__yxId;
+}
+
+const editorState = {
+    open: false,
+    dom: null,
+    active: null,
+    checked: new Set(),
+    snap: null,
+    syncAll: false,
+    tipOn: true,
+    timer: 0,
+    size: null,
+    undo: [],
+    redo: [],
+  };
+  let editorStyleEl = null;
+
+  const EDITOR_CSS = [
+    ".yx-editor-taghead{display:flex;align-items:center;gap:8px;flex:none;padding:2px 0 4px;}",
+    ".yx-tag-title{font-size:11.5px;color:#7f8494;flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".yx-tag-tabs{display:flex;align-items:center;gap:4px;flex:none;}",
+    ".yx-tag-tab{height:25px;padding:0 13px;border-radius:6px;border:1px solid transparent;background:transparent;color:#a2a8b8;font-size:13px;cursor:pointer;}",
+    ".yx-tag-tab:hover{background:#1d2028;color:#cfd4e0;}",
+    ".yx-tag-tab-on{background:#1e2b40;border-color:#31527d;color:#b9d0f2;}",
+    ".yx-tag-tabadd{width:22px;height:22px;padding:0;border-radius:6px;border:1px dashed #3a3d48;background:transparent;color:#8f95a6;cursor:pointer;font-size:12px;}",
+    ".yx-tag-tabadd:hover{border-color:#4a6f9f;color:#b9d0f2;}",
+    ".yx-tag-pv{display:flex;align-items:center;gap:4px;font-size:11px;color:#8b90a0;cursor:pointer;flex:none;}",
+    ".yx-tag-lib{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;gap:4px;}",
+    ".yx-tag-search{flex:none;height:26px;font-size:12px;}",
+    ".yx-tag-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:5px;padding-right:2px;}",
+    ".yx-tag-row{display:flex;align-items:flex-start;gap:6px;flex:none;}",
+    ".yx-tag-lv1{background:#161b24;border:1px solid #232a36;border-radius:8px;padding:4px 6px;}",
+    ".yx-tag-lv2{background:#151d22;border:1px solid #233038;border-radius:8px;padding:4px 6px;}",
+    ".yx-tag-lv3{background:#14171d;border:1px solid #24262f;border-radius:8px;padding:5px 6px 6px;}",
+    ".yx-tag-lvlab{flex:none;font-size:10px;letter-spacing:.4px;padding:2px 5px;border-radius:5px;white-space:nowrap;}",
+    ".yx-tag-lv1lab{color:#8fb2e8;background:#1b283c;}",
+    ".yx-tag-lv2lab{color:#88c9b0;background:#182b26;}",
+    ".yx-tag-lv3lab{color:#c9b184;background:#2a2418;}",
+    ".yx-tag-crow{display:flex;flex-direction:column;gap:3px;}",
+    ".yx-tag-cwrap{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}",
+    ".yx-tag-lv2chip{position:relative;height:22px;padding:0 7px;border-radius:6px;font-size:11px;gap:4px;background:#1a1d24;border:1px solid #2a2d37;color:#a9aebb;}",
+    ".yx-tag-lv2chip:hover{background:#20242e;color:#d8dbe4;}",
+    ".yx-tag-lv2chip-on{background:#22304a;border-color:#3a5f92;color:#cfe0ff;}",
+    ".yx-tag-lv2num{font-size:10px;color:#79808f;}",
+    ".yx-tag-cacts{display:none;gap:2px;margin-left:3px;}",
+    ".yx-tag-lv2chip:hover .yx-tag-cacts{display:inline-flex;}",
+    ".yx-tag-cact{font-size:10px;color:#7d8394;cursor:pointer;padding:0 2px;}",
+    ".yx-tag-cact:hover{color:#e8b25f;}",
+    ".yx-tag-cadd{height:22px;padding:0 6px;border-radius:6px;font-size:11px;border:1px dashed #3a3d48;background:transparent;color:#8f95a6;}",
+    ".yx-tag-cadd:hover{border-color:#4a6f9f;color:#b9d0f2;}",
+    ".yx-tag-lv3head{display:flex;align-items:center;gap:6px;margin-bottom:5px;}",
+    ".yx-tag-lv3count{font-size:10.5px;color:#7f8494;}",
+    ".yx-tag-lv3space{flex:1 1 auto;}",
+    ".yx-tag-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:5px;}",
+    ".yx-tag-card{position:relative;display:flex;flex-direction:column;gap:1px;padding:5px 6px;border-radius:7px;background:#1b1e26;border:1px solid #2a2d38;cursor:pointer;min-height:0;}",
+    ".yx-tag-card:hover{background:#232733;border-color:#3b4a63;}",
+    ".yx-tag-card-on{background:#20304a;border-color:#4470ab;}",
+    ".yx-tag-card-cn{font-size:11.5px;color:#dde1ea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".yx-tag-card-en{font-size:10px;color:#8d93a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".yx-tag-card-mid{font-size:9.5px;color:#6f7484;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".yx-tag-card-thumb{height:54px;border-radius:5px;background:#12141a;overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:2px;}",
+    ".yx-tag-card-thumb img{width:100%;height:100%;object-fit:cover;}",
+    ".yx-tag-pv-add{font-size:10px;color:#6f7686;cursor:pointer;}",
+    ".yx-tag-acts{display:none;gap:5px;margin-top:2px;}",
+    ".yx-tag-card:hover .yx-tag-acts{display:flex;}",
+    ".yx-tag-act{font-size:10px;color:#7d8394;cursor:pointer;}",
+    ".yx-tag-act:hover{color:#e8b25f;}",
+    ".yx-tag-selbox{width:14px;height:14px;border-radius:3px;border:1px solid #4a5060;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#9fb6d8;}",
+    ".yx-tag-selbox-on{background:#28405f;border-color:#4a7bb5;color:#dbe7f8;}",
+    ".yx-tag-foot{flex:none;padding:2px 0;}",
+    ".yx-tag-note{font-size:10.5px;color:#6f7484;}",
+    ".yx-tag-empty{padding:14px 6px;font-size:11.5px;color:#6f7484;}",
+    ".yx-tagact-box{width:min(420px,92vw);max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:12px;background:#171a21;border:1px solid #33363f;box-shadow:0 18px 60px rgba(0,0,0,.6);}",
+    ".yx-tagact-title{font-size:13px;color:#eef1f7;}",
+    ".yx-tagact-note{font-size:10.5px;color:#7f8494;line-height:1.6;}",
+    ".yx-tagact-foot{display:flex;justify-content:flex-end;gap:8px;}",
+    ".yx-editor-grip{position:absolute;right:2px;bottom:2px;width:16px;height:16px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 46%,#3c4150 46%,#3c4150 54%,transparent 54%,transparent 68%,#3c4150 68%,#3c4150 76%,transparent 76%);}",
+    ".yx-editor{position:relative;}",
+    ".yx-bk-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}",
+    ".yx-bk-list{max-height:200px;overflow:auto;display:flex;flex-direction:column;gap:3px;}",
+    ".yx-bk-item{display:flex;align-items:center;gap:6px;font-size:11px;color:#9aa0b0;padding:3px 5px;border-radius:5px;background:#1a1d24;}",
+    ".yx-float{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;pointer-events:none;}",
+  ".yx-float > *{pointer-events:auto;}",
+  ".yx-editor-modal{display:flex;align-items:center;justify-content:center;background:transparent;}",
+    ".yx-editor{width:min(1340px,96vw);height:min(840px,92vh);display:flex;flex-direction:column;",
+    "background:#13151b;border:1px solid #34363f;border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.66);overflow:hidden;}",
+    ".yx-editor-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2b2d36;background:#171a21;}",
+    ".yx-editor-title{font-size:15px;font-weight:600;color:#eef1f7;}",
+    ".yx-editor-count{font-size:12px;color:#8b90a0;}",
+    ".yx-editor-grow{flex:1 1 auto;}",
+    ".yx-editor-tip{cursor:pointer;}",
+    ".yx-editor-xbtn{width:30px;padding:0;cursor:pointer;}",
+    ".yx-editor-body{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:hidden;}",
+  ".yx-editor-topwrap{display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid #2b2d36;flex:none;}",
+  ".yx-editor-fields{flex:1 1 auto;display:flex;gap:10px;min-width:0;}",
+  ".yx-editor-fields .yx-editor-field{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}",
+  ".yx-editor-fields .yx-editor-field:nth-child(2){flex:0 0 260px;}",
+  ".yx-editor-tags{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;padding:8px 12px 10px;gap:6px;overflow:hidden;}",
+  ".yx-editor-taghost{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;}",
+  ".yx-tag-lv{padding:6px 8px;border-radius:9px;border:1px solid #2b2d36;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}",
+  ".yx-tag-lv0{background:#191b22;border-color:#282b36;}",
+  ".yx-tag-lv1{background:#1a2430;border-color:#2b3d52;}",
+  ".yx-tag-lv2{background:#1a2825;border-color:#2c4a42;}",
+  ".yx-tag-lv3{background:#1b1d24;border-color:#303442;flex-direction:column;align-items:stretch;gap:8px;}",
+  ".yx-tag-lvlab{font-size:11px;padding:1px 6px;border-radius:5px;flex:none;letter-spacing:.5px;}",
+  ".yx-tag-lv1 .yx-tag-lvlab{background:#22334a;color:#a9c4e2;}",
+  ".yx-tag-lv2 .yx-tag-lvlab{background:#22423a;color:#a8d2c2;}",
+  ".yx-tag-lv3 .yx-tag-lvlab{background:#2b3040;color:#b9c0d4;}",
+  ".yx-tag-cat{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:7px;border:1px solid transparent;background:#212530;color:#c3c8d4;font-size:12.5px;cursor:pointer;}",
+  ".yx-tag-cat:hover{background:#2a3040;color:#e6eaf2;}",
+  ".yx-tag-cat.yx-tag-cat-on{background:#2a3d55;border-color:#4d7fb8;color:#eaf2ff;}",
+  ".yx-tag-lv2 .yx-tag-cat{background:#20302c;color:#b6cdc3;}",
+  ".yx-tag-lv2 .yx-tag-cat:hover{background:#283d37;color:#e2f3ec;}",
+  ".yx-tag-lv2 .yx-tag-cat.yx-tag-cat-on{background:#2b4a41;border-color:#4b8e7c;color:#e6fbf2;}",
+  ".yx-tag-cat-num{font-size:10px;opacity:.7;}",
+  ".yx-tag-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:8px;}",
+  ".yx-tag-card{position:relative;display:flex;flex-direction:column;gap:3px;padding:6px 8px 7px;border-radius:9px;border:1px solid #303442;background:#22252e;color:#d6d9e2;cursor:pointer;text-align:left;min-height:58px;}",
+  ".yx-tag-card:hover{border-color:#4d7fb8;background:#252a36;}",
+  ".yx-tag-card-cn{font-size:12px;color:#e2e6ef;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}",
+  ".yx-tag-card-en{font-size:11px;color:#93a6c4;font-family:ui-monospace,Consolas,monospace;word-break:break-all;}",
+  ".yx-tag-card-mid{font-size:10px;color:#7f8494;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".yx-tag-card-thumb{width:100%;height:64px;border-radius:6px;overflow:hidden;background:#171922;display:flex;align-items:center;justify-content:center;}",
+  ".yx-tag-card-thumb img{width:100%;height:100%;object-fit:cover;display:block;}",
+  ".yx-tag-card-add{font-size:11px;color:#6f7686;}",
+  ".yx-tag-acts{position:absolute;right:4px;top:4px;display:none;gap:2px;background:rgba(12,13,18,.92);border:1px solid #3a3f4e;border-radius:7px;padding:2px;}",
+  ".yx-tag-card:hover .yx-tag-acts{display:flex;}",
+  ".yx-tag-act{font-size:10px;padding:1px 5px;border-radius:5px;border:none;background:#2a2f3c;color:#c7cddb;cursor:pointer;}",
+  ".yx-tag-act:hover{background:#3a4560;color:#eaf2ff;}",
+  ".yx-tag-act.yx-danger:hover{background:#5a2626;color:#ffd7d7;}",
+    ".yx-editor-col{display:flex;flex-direction:column;min-width:0;min-height:0;}",
+    ".yx-editor-left{width:240px;border-right:1px solid #2b2d36;background:#16181f;display:flex;flex-direction:column;min-height:0;}",
+    ".yx-editor-mid{flex:1 1 auto;padding:12px 14px;gap:10px;display:flex;flex-direction:column;min-width:0;}",
+    ".yx-editor-right{width:470px;flex:none;border-left:1px solid #2b2d36;background:#16181f;padding:10px 12px;gap:8px;display:flex;flex-direction:column;min-height:0;}",
+    ".yx-editor-colhead{padding:9px 12px;font-size:12px;color:#9aa0b0;border-bottom:1px solid #2b2d36;}",
+    ".yx-editor-objs{flex:1 1 auto;overflow-y:auto;padding:6px;}",
+    ".yx-editor-obj{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer;",
+    "border:1px solid transparent;color:#cfd4e0;font-size:12px;}",
+    ".yx-editor-obj:hover{background:#1c1f28;}",
+    ".yx-editor-obj-on{background:#1b2334;border-color:#3f78ff;}",
+    ".yx-editor-objnum{flex:0 0 auto;min-width:34px;color:#8fb6ff;font-variant-numeric:tabular-nums;}",
+    ".yx-editor-objsum{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9aa0b0;}",
+    ".yx-editor-check{width:14px;height:14px;accent-color:#3f78ff;}",
+    ".yx-editor-field{display:flex;flex-direction:column;gap:6px;min-height:0;flex:1 1 0;}",
+    ".yx-editor-fieldbar{display:flex;align-items:center;gap:8px;}",
+    ".yx-editor-flabel{font-size:12px;color:#dfe4ee;font-weight:600;}",
+    ".yx-editor-fhint{font-size:11px;color:#7f8697;}",
+    ".yx-editor-area{flex:1 1 auto;min-height:90px;resize:none;background:#0f1015;color:#e6e9f2;",
+    "border:1px solid #34363f;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.55;",
+    "font-family:ui-monospace,Consolas,monospace;}",
+    ".yx-editor-area:focus{outline:none;border-color:#3f78ff;}",
+    ".yx-editor-foot{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #2b2d36;background:#171a21;}",
+    ".yx-editor-note{flex:1 1 auto;font-size:11px;color:#7f8697;}",
+    ".yx-editor-btn{cursor:pointer;padding:6px 14px;}",
+    ".yx-editor-btn-ok{background:#2b5fd9;border-color:#3f78ff;color:#fff;}",
+    ".yx-editor-empty{padding:14px 10px;font-size:12px;color:#7f8697;line-height:1.6;}",
+    ".yx-editor-plus{display:flex;gap:6px;flex-wrap:wrap;}",
+    ".yx-editor-sync{display:flex;align-items:center;gap:6px;font-size:11px;color:#9aa0b0;}",
+  
+".yx-editor-setbtn{margin-left:2px;}",
+".yx-editor-setbtn:hover{background:#22355a;border-color:#3f78ff;color:#eaf2ff;}",
+".yx-set-box{width:min(760px,94vw);max-height:min(720px,88vh);display:flex;flex-direction:column;background:#1b1c22;border:1px solid #33363f;border-radius:12px;overflow:hidden;}",
+".yx-set-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2b2d36;background:#20222a;}",
+".yx-set-title{font-size:13px;font-weight:600;color:#e8e8ef;}",
+".yx-set-grow{flex:1;}",
+".yx-set-tabs{display:flex;gap:6px;padding:8px 12px 0;}",
+".yx-set-tab{font-size:12px;padding:4px 10px;border-radius:7px;border:1px solid #34363f;background:#1e1f26;color:#a9adb8;cursor:pointer;}",
+".yx-set-tab:hover{background:#252833;}",
+".yx-set-tab.yx-set-tab-on{background:#22355a;border-color:#4d8fe8;color:#eaf2ff;}",
+".yx-set-body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;}",
+".yx-set-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#c9c9d1;flex-wrap:wrap;}",
+".yx-set-lab{min-width:64px;color:#a9adb8;}",
+".yx-set-input{flex:1;min-width:200px;background:#15161b;border:1px solid #34363f;border-radius:7px;color:#dcdce4;padding:4px 8px;font-size:12px;}",
+".yx-set-note{font-size:11px;color:#8d90a0;line-height:1.7;}",
+".yx-set-sep{height:1px;background:#2b2d36;margin:2px 0;}",
+".yx-set-eye{font-size:11px;padding:2px 8px;}",
+  ".yx-editor-taghost{display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;}",
+    ".yx-tag-tabs{display:flex;gap:4px;padding:3px;background:#15161b;border:1px solid #2b2d36;border-radius:9px;}",
+    ".yx-tag-tab{flex:1;text-align:center;cursor:pointer;padding:4px 12px;font-size:11px;border-radius:999px;border:1px solid #34363f;background:#1b1e26;color:#cfd4e0;}",
+    ".yx-tag-tab-on{background:#2b5fd9;border-color:#3f78ff;color:#fff;}",
+    ".yx-tag-search{width:100%;box-sizing:border-box;font-size:12px;}",
+    ".yx-tag-chips{display:flex;gap:6px;flex-wrap:wrap;max-height:74px;overflow-y:auto;padding-bottom:2px;}",
+  ".yx-tag-body{display:flex;flex:1;min-height:0;gap:8px;}",
+  ".yx-tag-left{width:150px;flex:none;display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding-right:6px;border-right:1px solid #2b2d36;}",
+  ".yx-tag-cat{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 8px;border-radius:7px;border:1px solid transparent;background:#1e1f26;color:#b9bdc8;font-size:12px;cursor:pointer;text-align:left;}",
+  ".yx-tag-cat:hover{background:#252833;color:#eaf2ff;}",
+  ".yx-tag-cat.yx-tag-cat-on{background:#22355a;border-color:#4d8fe8;color:#eaf2ff;}",
+  ".yx-tag-cat-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".yx-tag-cat-num{font-size:10px;color:#7f8494;flex:none;}",
+  ".yx-tag-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:6px;}",
+  ".yx-tag-mainhead{font-size:11px;color:#8d90a0;}",
+  ".yx-tag-list{flex:1;min-height:0;}",
+  ".yx-tag-seriesq{margin-bottom:4px;}",
+  ".yx-tag-chips{max-height:none;overflow:visible;}",
+    ".yx-tag-chip{cursor:pointer;padding:2px 9px;font-size:11px;border-radius:6px;border:1px solid #2f323c;background:#191c24;color:#c4cad8;}",
+    ".yx-tag-chip:hover{background:#232838;border-color:#3f78ff;}",
+    ".yx-tag-chip-on{background:#2b5fd9;border-color:#3f78ff;color:#fff;}",
+    ".yx-tag-list{flex:1 1 auto;min-height:120px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start;padding:2px;}",
+    ".yx-tag-item{cursor:pointer;padding:3px 9px;font-size:12px;border-radius:6px;border:1px solid #2f323c;background:#191c24;color:#dfe4ee;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-tag-item:hover{background:#232838;border-color:#3f78ff;}",
+    ".yx-tag-item small{color:#8b93a6;font-size:10px;margin-left:6px;}",
+    ".yx-tag-foot{display:flex;align-items:center;gap:8px;font-size:11px;color:#8b93a6;flex-wrap:wrap;}",
+    ".yx-tag-empty{font-size:12px;color:#7f8697;line-height:1.6;padding:6px 2px;}",
+    ".yx-tag-addrow{display:flex;gap:6px;align-items:center;}",
+    ".yx-tag-addrow input{flex:1 1 auto;min-width:0;font-size:12px;}",
+    ".yx-tag-del{color:#ff8a8a;cursor:pointer;margin-left:8px;}",
+    ".yx-tag-pv{display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c4;cursor:pointer;user-select:none;}",
+    ".yx-tag-pv input{margin:0;cursor:pointer;}",
+    ".yx-tag-thumb{width:22px;height:22px;object-fit:cover;border-radius:5px;border:1px solid #3a3f4d;margin-left:6px;vertical-align:middle;background:#0f1218;}",
+    ".yx-tag-thumb:hover{border-color:#3f78ff;}",
+    ".yx-tag-pv-add{color:#7f8697;font-size:10px;margin-left:6px;cursor:pointer;opacity:0;}",
+    ".yx-tag-item:hover .yx-tag-pv-add{opacity:1;}",
+    ".yx-tag-pv-add:hover{color:#8ab4ff;}",
+    ".yx-pv-box{background:#161a22;border:1px solid #2f323c;border-radius:10px;padding:10px;max-width:min(560px,92vw);max-height:92vh;display:flex;flex-direction:column;gap:8px;box-shadow:0 18px 60px rgba(0,0,0,.55);}",
+    ".yx-pv-bar{display:flex;align-items:center;gap:8px;font-size:12px;color:#dfe4ee;}",
+    ".yx-pv-title{font-size:13px;font-weight:600;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-pv-body{display:flex;align-items:center;justify-content:center;min-height:120px;background:#0f1218;border-radius:8px;padding:6px;}",
+    ".yx-pv-img{max-width:100%;max-height:64vh;border-radius:6px;}",
+    ".yx-pv-foot{display:flex;gap:8px;justify-content:flex-end;}",
+    ".yx-chat-box{background:#161a22;border:1px solid #2f323c;border-radius:10px;width:min(760px,94vw);height:min(680px,88vh);display:flex;flex-direction:column;gap:8px;padding:10px;box-shadow:0 18px 60px rgba(0,0,0,.55);}",
+    ".yx-chat-head{display:flex;align-items:center;gap:8px;}",
+    ".yx-chat-title{font-size:14px;font-weight:700;color:#e8ecf5;}",
+    ".yx-chat-model{font-size:11px;color:#8b93a6;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-chat-panel{display:none;flex-direction:column;gap:6px;border:1px solid #2f323c;border-radius:8px;padding:8px;background:#11151d;max-height:38vh;overflow-y:auto;}",
+    ".yx-chat-field{display:flex;align-items:center;gap:8px;font-size:12px;color:#c4cad8;}",
+    ".yx-chat-field span{min-width:66px;color:#8b93a6;}",
+    ".yx-chat-field input{flex:1 1 auto;min-width:0;}",
+    ".yx-chat-note{font-size:11px;color:#7f8697;line-height:1.6;}",
+    ".yx-chat-addrow{display:flex;gap:8px;}",
+    ".yx-chat-list{flex:1 1 auto;min-height:120px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px;}",
+    ".yx-chat-row{display:flex;}",
+    ".yx-chat-me{justify-content:flex-end;}",
+    ".yx-chat-bubble{max-width:86%;padding:7px 10px;border-radius:9px;font-size:12px;line-height:1.65;white-space:pre-wrap;word-break:break-word;border:1px solid #2f323c;background:#191c24;color:#dfe4ee;}",
+    ".yx-chat-me .yx-chat-bubble{background:#2b5fd9;border-color:#3f78ff;color:#fff;}",
+    ".yx-chat-stream{opacity:.92;}",
+    ".yx-chat-foot{display:flex;gap:8px;align-items:flex-end;}",
+    ".yx-chat-input{flex:1 1 auto;min-height:64px;max-height:160px;resize:vertical;background:#0f1218;color:#dfe4ee;border:1px solid #2f323c;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.6;}",
+    ".yx-chat-send{min-width:64px;height:32px;}",
+    ".yx-chat-eye{min-width:46px;height:26px;font-size:11px;padding:0 6px;}",
+    ".yx-chat-empty{font-size:12px;color:#7f8697;line-height:1.7;padding:8px 4px;}",
+    // ===== Tag 区排版（后写覆盖前面的旧规则）=====
+    ".yx-tag-lib{display:flex;flex-direction:column;gap:6px;min-height:0;flex:1 1 auto;}",
+    ".yx-tag-lv{display:flex;flex-direction:column;gap:4px;padding:5px 7px;border-radius:8px;border:1px solid #2a2d36;}",
+    ".yx-tag-lvlab{font-size:10px;letter-spacing:.4px;color:#7d8396;}",
+    ".yx-tag-cats{display:flex;flex-wrap:wrap;gap:4px;}",
+    ".yx-tag-chips{display:flex;flex-wrap:wrap;gap:4px;max-height:none;overflow:visible;padding:0;}",
+    ".yx-tag-cat{padding:4px 10px;font-size:12.5px;border-radius:6px;background:#1e2129;border:1px solid #2c303b;color:#c2c8d6;display:inline-flex;gap:5px;align-items:center;}",
+    ".yx-tag-cat:hover{background:#262b37;color:#e9f1ff;}",
+    ".yx-tag-cat.yx-tag-cat-on{background:#22406f;border-color:#4d8fe8;color:#eaf2ff;}",
+    ".yx-tag-cat-num{font-size:10px;color:#767c8d;}",
+    ".yx-tag-lv3{flex:0 0 auto;min-height:0;}",
+    ".yx-tag-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:6px;min-height:0;overflow:visible;align-content:flex-start;padding:2px 2px 4px;}",
+    ".yx-tag-card{min-height:0;padding:5px 6px 6px;gap:2px;border-radius:7px;border:1px solid #2b2f3a;background:#1d2029;}",
+    ".yx-tag-card-cn{font-size:11.5px;line-height:1.35;color:#dfe4ee;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-tag-card-en{font-size:10px;line-height:1.3;color:#8d94a8;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-tag-card-mid{font-size:9.5px;color:#6f7586;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".yx-tag-card-thumb{width:100%;height:56px;object-fit:cover;border-radius:5px;display:block;background:#12151c;border:1px solid #2b2f3a;}",
+    ".yx-tag-act{font-size:10px;padding:0 5px;height:16px;line-height:16px;border-radius:4px;border:1px solid #333846;background:#20242e;color:#c6ccdb;}",
+    ".yx-editor-tags{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;overflow:hidden;}",
+    ".yx-editor-taghost{overflow:visible;}",
+    ".yx-editor-topwrap{flex:0 0 auto;}",
+    ".yx-editor-area{height:172px;min-height:120px;resize:vertical;}",
+    ".yx-editor-left{max-height:200px;overflow-y:auto;}",
+  ].join("");
+  const TAG_CSS_EXTRA = [
+    ".yx-tag-card{overflow:visible;}",
+    ".yx-tag-acts{display:none;position:absolute;left:0;right:0;bottom:100%;z-index:30;justify-content:center;align-items:center;gap:4px;margin:0;padding:3px 4px;background:#1a2230;border:1px solid #33405a;border-radius:8px;box-shadow:0 6px 14px rgba(0,0,0,.45);white-space:nowrap;}",
+    ".yx-tag-card:hover .yx-tag-acts{display:flex;}",
+    ".yx-tag-act{display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;line-height:1;padding:5px 8px;border-radius:5px;border:1px solid #35507a;background:#233247;color:#cfe0ff;white-space:nowrap;cursor:pointer;}",
+    ".yx-tag-act:hover{background:#2d4363;border-color:#4a7bd0;color:#fff;}",
+    ".yx-tag-card-thumb{height:auto !important;aspect-ratio:1 / 1;width:100%;position:relative;}",
+    ".yx-tag-card-thumb .yx-tag-thumb{width:100%;height:100%;object-fit:cover;}",
+    ".yx-tag-card-thumb-empty{height:auto !important;aspect-ratio:1 / 1;}",
+    ".yx-mini-menu{display:flex;flex-direction:column;gap:2px;min-width:118px;padding:5px;background:#161d29;border:1px solid #33405a;border-radius:9px;box-shadow:0 8px 20px rgba(0,0,0,.5);}",
+    ".yx-mini-item{padding:6px 9px;border:1px solid transparent;border-radius:6px;background:transparent;color:#cfe0ff;font-size:12px;text-align:left;cursor:pointer;}",
+    ".yx-mini-item:hover{background:#233247;border-color:#35507a;color:#fff;}",
+    ".yx-tag-lv3{flex:0 0 auto;}",
+    ".yx-tag-list{overflow:visible;}",
+    ".yx-tag-sel-on{border-color:#3f8f5f !important;background:#14261c !important;color:#c9ecd6 !important;}",
+    ".yx-tag-tabs{gap:6px;align-items:center;}",
+    ".yx-tag-tab{font-size:13.5px;padding:7px 14px;line-height:1;white-space:nowrap;}",
+    ".yx-tag-crow .yx-tag-lvlab{font-size:12.5px;}",
+    ".yx-tag-lv1 .yx-tag-lvlab{font-size:13px;}",
+    ".yx-tag-lv2chip{font-size:11.5px;}",
+    ".yx-tag-lv2chip-on{border-color:#4a86c8;background:#1b2b40;color:#dbe8ff;}",
+    ".yx-tag-lv2chip-parent-on{border-color:#3f7a63;background:#152a22;color:#c8e8d8;}",
+    ".yx-tag-tabadd{font-size:13px;}",
+    ".yx-tag-title{font-size:13px;}",
+    ".yx-tag-card-thumb{position:relative;}"
+  , ".yx-tag-card-thumb-empty{background:#0c0e13;border:1px dashed #333a48;color:#5f6779;}"
+  , ".yx-tag-card-thumb-empty:hover{border-color:#4a7bd0;color:#8fb3f0;}"
+  , ".yx-tag-card-thumb .yx-tag-pv-add{font-size:24px;line-height:1;color:#ffffff;}",
+    ".yx-tag-pv-add{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#8fa3c4;background:#12151c;border:1px dashed #33405a;border-radius:5px;}",
+    ".yx-tag-pv-add:hover{color:#cfe0ff;border-color:#4a86c8;background:#141b26;}",
+    ".yx-tag-act-warn{color:#ff7676;border-color:#7a2f2f;background:#2c1a1a;}",
+    ".yx-editor-grow{flex:1 1 auto;}",
+    ".yx-tag-acts-float{position:fixed;z-index:100060;display:none;align-items:center;gap:4px;padding:3px 5px;background:#1a2230;border:1px solid #33405a;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.5);white-space:nowrap;}",
+    ".yx-tag-acts-float .yx-tag-act{display:inline-flex;align-items:center;font-size:10.5px;padding:5px 8px;border-radius:5px;border:1px solid #35507a;background:#233247;color:#cfe0ff;cursor:pointer;}",
+    ".yx-tag-acts-float .yx-tag-act:hover{background:#2c4162;border-color:#4a7bd0;color:#eaf2ff;}",
+    ".yx-tag-acts-float .yx-tag-act.yx-tag-act-warn{color:#ff7676;border-color:#7a2f2f;background:#2c1a1a;}",
+    ".yx-tag-card-thumb-empty .yx-tag-pv-add{opacity:1;display:flex;align-items:center;justify-content:center;font-size:26px;line-height:1;color:#ffffff;background:transparent;border:0;}",
+    ".yx-tag-lv2chip.yx-tag-lv2chip-on{background:#2c3a22;border-color:#7f9a4a;color:#e8f5cf;}",
+    ".yx-tag-lv1 .yx-tag-lv2chip.yx-tag-lv2chip-on{background:#3a2c18;border-color:#a8792c;color:#ffe3b0;}",
+  ].join("");
+
+  const ensureEditorStyle = () => {
+    if (editorStyleEl || typeof document === "undefined") return;
+    editorStyleEl = document.createElement("style");
+    editorStyleEl.id = "yx-editor-style";
+    editorStyleEl.textContent = EDITOR_CSS + TAG_CSS_EXTRA;
+    document.head.appendChild(editorStyleEl);
+  };
+
+  const editorBoxes = () => S.boxes.filter(Boolean);
+  const editorSummary = (box) => {
+    const desc = String(box.desc || "").trim();
+    if (desc) return desc.replace(/\s+/g, " ").slice(0, 40);
+    const text = String(box.text || "").trim();
+    return text ? text.replace(/\s+/g, " ").slice(0, 40) : "（空）";
+  };
+
+  // ---------- Tag 库：内置标签（WeiLin，MIT）+ 角色库（Penna，MIT）+ 我的标签 ----------
+// ===== 提示词编辑库 · Tag 库（标签 / 角色库 / 我的 / 自定义库；四级纵向；可编辑移动删除）=====
+const TAGDATA_URL = "/moss_yxbox/data/tags_cn.json";
+const CHARDATA_URL = "/moss_yxbox/data/characters.json.gz";
+const tagLib = {
+  groups: null, tagsError: "", tagsLoading: false,
+  chars: null, charsBySeries: null, seriesList: null, charsError: "", charsLoading: false,
+  lib: "tags", cat: "", sub: "", series: "", q: "", dom: null, head: null,
+  mine: null, libs: null, error: "",
+  selectMode: false,
+};
+const tagLibSel = new Set();
+
+const lowerOf = (text) => String(text || "").toLowerCase();
+
+const fetchJsonFile = async (url) => {
+  const api = globalThis.api;
+  if (api && typeof api.fetchApi === "function") {
+    const res = await api.fetchApi(url);
+    if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
+    return await res.json();
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+};
+
+const fetchGzipJson = async (url) => {
+  let buf = null;
+  const api = globalThis.api;
+  if (api && typeof api.fetchApi === "function") {
+    const res = await api.fetchApi(url);
+    if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
+    buf = await res.arrayBuffer();
+  } else {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    buf = await res.arrayBuffer();
+  }
+  if (typeof DecompressionStream !== "function") throw new Error("当前浏览器不支持 gzip 解压");
+  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(await new Response(stream).text());
+};
+
+// ── 自定义层（重命名 / 移动 / 删除 / 新增 / 自定义库），存 user 目录 tags_custom.json ──
+const tagOver = {
+  loaded: false, loading: false,
+  mine: [], libs: [], fav: [], rename: {}, removed: {}, moved: {}, added: {},
+};
+const keyCat = (lib, cat) => lib + "|cat|" + cat;
+const keySub = (lib, cat, sub) => lib + "|sub|" + cat + "|" + sub;
+const keyTag = (lib, cat, sub, tag) => lib + "|tag|" + cat + "|" + sub + "|" + tag;
+const keySeries = (series) => "chars|series|" + series;
+const keyChar = (name) => "chars|char|" + name;
+const keyMine = (tag) => "mine|tag|" + tag;
+const keyLib = (id) => "lib:" + id;
+const keyLibCat = (id, cat) => "lib:" + id + "|cat|" + cat;
+const keyLibTag = (id, cat, tag) => "lib:" + id + "|tag|" + cat + "|" + tag;
+
+const overRename = (key) => tagOver.rename[key] || null;
+const overIsRemoved = (key) => !!tagOver.removed[key];
+const overMoved = (key) => tagOver.moved[key] || null;
+const overAdded = (key) => (Array.isArray(tagOver.added[key]) ? tagOver.added[key] : []);
+
+const tagOverPayload = () => ({
+  v: 4,
+  mine: tagOver.mine || [],
+  fav: tagOver.fav || [],
+  libs: tagOver.libs || [],
+  rename: tagOver.rename || {},
+  removed: tagOver.removed || {},
+  moved: tagOver.moved || {},
+  added: tagOver.added || {},
+});
+
+const saveTagOver = () => {
+  serverStorePut("tags_custom", tagOverPayload()).catch(() => {});
+  try { globalThis.__yxTagOverSnapshot = JSON.stringify(tagOverPayload()); } catch (error) { /* 忽略 */ }
+};
+
+const loadTagOver = () => {
+  if (tagOver.loaded || tagOver.loading) return;
+  tagOver.loading = true;
+  serverStoreGet("tags_custom")
+    .then((data) => {
+      if (data && typeof data === "object") {
+        if (Array.isArray(data.mine)) tagOver.mine = data.mine.map((x) => (typeof x === "string" ? { t: x, cn: "" } : { t: String((x && x.t) || ""), cn: String((x && x.cn) || "") })).filter((x) => x.t);
+        else if (Array.isArray(data.tags)) tagOver.mine = data.tags.map((t) => ({ t: String(t || ""), cn: "" })).filter((x) => x.t);
+        if (Array.isArray(data.libs)) tagOver.libs = data.libs;
+        const rn = data.rename || data.renamed;
+        if (rn && typeof rn === "object") tagOver.rename = rn;
+        if (data.removed && typeof data.removed === "object") tagOver.removed = data.removed;
+        if (data.moved && typeof data.moved === "object") tagOver.moved = data.moved;
+        if (data.added && typeof data.added === "object") tagOver.added = data.added;
+        if (Array.isArray(data.fav)) tagOver.fav = data.fav;
+        if (Array.isArray(data.libs)) tagOver.libs = data.libs.map(libMigrate).filter(Boolean);
+      }
+    })
+    .catch(() => {})
+    .then(() => {
+      tagOver.loaded = true;
+      tagOver.loading = false;
+      tagLib.mine = tagOver.mine;
+      tagLib.libs = tagOver.libs;
+      renderTagLib();
+    });
+};
+const loadMine = loadTagOver;
+const saveMine = () => saveTagOver();
+
+const loadTagLib = () => {
+  if (tagLib.groups || tagLib.tagsLoading) return;
+  tagLib.tagsLoading = true;
+  tagLib.tagsError = "";
+  renderTagLib();
+  fetchJsonFile(TAGDATA_URL)
+    .then((data) => {
+      tagLib.groups = Array.isArray(data && data.groups) ? data.groups : [];
+      const first = tagLib.groups[0];
+      if (!tagLib.cat && first) tagLib.cat = String(first.n || "");
+    })
+    .catch((error) => {
+      tagLib.tagsError = "标签数据读取失败：" + (error && error.message ? error.message : String(error));
+    })
+    .then(() => {
+      tagLib.tagsLoading = false;
+      renderTagLib();
+    });
+};
+
+const loadCharLib = () => {
+  if (tagLib.chars || tagLib.charsLoading) return;
+  tagLib.charsLoading = true;
+  tagLib.charsError = "";
+  renderTagLib();
+  fetchGzipJson(CHARDATA_URL)
+    .then((data) => {
+      const rows = Array.isArray(data && data.rows) ? data.rows : [];
+      const bySeries = new Map();
+      for (const row of rows) {
+        const series = String(row[1] || "");
+        if (!bySeries.has(series)) bySeries.set(series, []);
+        bySeries.get(series).push(row);
+      }
+      tagLib.chars = rows;
+      tagLib.charsBySeries = bySeries;
+      tagLib.seriesList = Array.from(bySeries.entries())
+        .map((pair) => ({ name: pair[0], count: pair[1].length }))
+        .sort((a, b) => b.count - a.count);
+    })
+    .catch((error) => {
+      tagLib.charsError = "角色库读取失败：" + (error && error.message ? error.message : String(error));
+    })
+    .then(() => {
+      tagLib.charsLoading = false;
+      renderTagLib();
+    });
+};
+
+// ── 取数：当前库的分级结构 ────────────────────────────────────────────────
+const libList = () => {
+  const extra = (Array.isArray(tagOver.libs) ? tagOver.libs : []).filter((lib) => lib && lib.name);
+  return extra;
+};
+const libById = (id) => libList().find((lib) => String(lib.id) === String(id)) || null;
+const LSEP = "\u0001";
+const libLevelsOf = (lib) => Math.max(1, Math.min(6, Number(lib && lib.levels) || 2));
+const libMigrate = (raw) => {
+  if (!raw || typeof raw !== "object" || !String(raw.name || "").trim()) return null;
+  const id = String(raw.id || ("u" + Math.random().toString(36).slice(2, 8)));
+  const cats = [];
+  const tags = [];
+  const migrated = Array.isArray(raw.cats) && raw.cats.every((c) => c && Array.isArray(c.p));
+  if (migrated) {
+    for (const c of raw.cats) cats.push({ p: c.p.map((x) => String(x)) });
+    for (const row of raw.tags || []) {
+      if (!row || !Array.isArray(row.p)) continue;
+      const t = String(row.t || "").trim();
+      if (t) tags.push({ p: row.p.map((x) => String(x)), t, cn: String(row.cn || "") });
+    }
+    return { id, name: String(raw.name), levels: Math.max(1, Math.min(6, Number(raw.levels) || 2)), cats, tags };
+  }
+  for (const c of raw.cats || []) {
+    const name = String((c && c.name) || "").trim();
+    if (name) cats.push({ p: [name] });
+    for (const row of (c && c.tags) || []) {
+      const t = String((row && row.t) || "").trim();
+      if (t) tags.push({ p: name ? [name] : [], t, cn: String((row && row.cn) || "") });
+    }
+  }
+  return { id, name: String(raw.name), levels: 2, cats, tags };
+};
+const libCatKey = (id, p) => "lib:" + id + "|cat|" + p.join(LSEP);
+const libTagKey = (id, p, t) => "lib:" + id + "|tag|" + p.join(LSEP) + LSEP + t;
+const pathSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const pathUnder = (p, prefix) => prefix.length <= p.length && prefix.every((x, i) => x === p[i]);
+const libTagCount = (found, prefix) => (found.tags || []).filter((row) => pathUnder(row.p, prefix)).length;
+const libCatItems = (found, depth, prefix) => (found.cats || [])
+  .filter((c) => c.p.length === depth && pathUnder(c.p, prefix))
+  .map((c) => ({ key: libCatKey(found.id, c.p), name: c.p[c.p.length - 1], count: libTagCount(found, c.p), path: c.p }));
+const libLeafRows = (found, prefix) => (found.tags || [])
+  .filter((row) => row.p.length === libLevelsOf(found) - 1 && pathSame(row.p, prefix));
+const libPrefix = () => (Array.isArray(tagLib.sel) ? tagLib.sel : []);
+const libPick = (libId) => { tagLib.lib = libId; tagLib.sel = []; };
+
+const tagsOfSub = (sub) => (Array.isArray(sub && sub.t) ? sub.t.length : 0);
+const tagsOfGroup = (group) => (Array.isArray(group && group.s) ? group.s.reduce((sum, sub) => sum + tagsOfSub(sub), 0) : 0);
+
+const lv1List = () => {
+  const lib = tagLib.lib;
+  if (lib === "chars") {
+    const list = (tagLib.seriesList || [])
+      .map((item) => ({ name: String(item.name || ""), count: item.count }))
+      .filter((item) => item.name && !overIsRemoved(keySeries(item.name)));
+    for (const add of tagOver.added["chars|series"] || []) {
+      const name = String(add.t || "");
+      if (name && !list.some((item) => item.name === name)) list.push({ name, count: 0 });
+    }
+    return list.map((item) => ({ key: keySeries(item.name), name: item.name, show: overShowName(keySeries(item.name), item.name), count: item.count }));
+  }
+  if (lib === "mine") return [];
+  if (lib.startsWith("lib:")) return [];
+  const list = (tagLib.groups || [])
+    .map((group) => ({ name: String(group.n || ""), count: tagsOfGroup(group) }))
+    .filter((item) => item.name && !overIsRemoved(keyCat("tags", item.name)));
+  for (const add of tagOver.added["tags|cat|"] || []) {
+    const name = String(add.t || "");
+    if (name && !list.some((item) => item.name === name)) list.push({ name, count: 0 });
+  }
+  return list.map((item) => ({ key: keyCat("tags", item.name), name: item.name, show: overShowName(keyCat("tags", item.name), item.name), count: item.count }));
+};
+
+const lv2List = () => {
+  const lib = tagLib.lib;
+  if (lib.startsWith("lib:")) return [];
+  if (lib !== "tags") return [];
+  const group = (tagLib.groups || []).find((g) => String(g.n || "") === tagLib.cat);
+  const subs = group && Array.isArray(group.s) ? group.s : [];
+  const list = subs
+    .map((sub) => ({ name: String(sub.n || ""), count: tagsOfSub(sub) }))
+    .filter((item) => item.name && !overIsRemoved(keySub("tags", tagLib.cat, item.name)));
+  for (const add of tagOver.added[keyCat("tags", tagLib.cat)] || []) {
+    const name = String(add.t || "");
+    if (name && !list.some((item) => item.name === name)) list.push({ name, count: 0 });
+  }
+  return list.map((item) => ({
+    key: keySub("tags", tagLib.cat, item.name),
+    name: item.name,
+    show: overShowName(keySub("tags", tagLib.cat, item.name), item.name),
+    count: item.count,
+  }));
+};
+
+const tagRows = () => {
+  const q = lowerOf(tagLib.q).trim();
+  const out = [];
+  const push = (row) => { out.push(row); };
+  const lib = tagLib.lib;
+  if (lib === "mine") {
+    for (const row of tagLibFavList()) {
+      const key = row.key || keyMine(row.t);
+      if (overIsRemoved(key)) continue;
+      const rn = overRename(key);
+      const tag = rn && rn.t ? rn.t : row.t;
+      const cn = rn && rn.cn ? rn.cn : row.cn || "";
+      if (q && !(lowerOf(tag).includes(q) || lowerOf(cn).includes(q))) continue;
+      push({ key, tag, cn, mid: row.mid || "", kind: row.kind || "fav", lib, cat: "", sub: "", appearance: row.app || "", clothing: row.cloth || "", series: row.mid || "" });
+    }
+    return out;
+  }
+  if (lib === "chars") {
+    const series = tagLib.series;
+    const rows = (tagLib.charsBySeries && tagLib.charsBySeries.get(series)) || [];
+    for (const row of rows) {
+      const name = String(row[0] || "");
+      const key = keyChar(name);
+      if (overIsRemoved(key)) continue;
+      const rn = overRename(key);
+      const shownName = rn && rn.t ? rn.t : name;
+      const aliases = rn && rn.cn ? rn.cn : String(row[2] || "");
+      const app = String(row[3] || "");
+      const cloth = String(row[4] || "");
+      const mv = overMoved(key);
+      const effSeries = mv && mv.cat ? mv.cat : String(row[1] || "");
+      if (series && effSeries !== series) continue;
+      if (q && !(lowerOf(shownName).includes(q) || lowerOf(aliases).includes(q) || lowerOf(app).includes(q) || lowerOf(effSeries).includes(q) || lowerOf(cloth).includes(q))) continue;
+      push({ key, tag: shownName, cn: aliases, mid: app, kind: "chars", lib, cat: effSeries, sub: "", series: effSeries, appearance: app, clothing: cloth });
+    }
+    for (const add of tagOver.added[keySeries(series)] || []) {
+      const key = keyChar(add.t);
+      if (overIsRemoved(key)) continue;
+      if (q && !lowerOf(add.t).includes(q)) continue;
+      push({ key, tag: add.t, cn: add.cn || "", mid: add.app || "", kind: "chars", lib, cat: series, series, appearance: add.app || "", clothing: add.cloth || "" });
+    }
+    return out;
+  }
+  if (lib.startsWith("lib:")) {
+    const id = lib.slice(4);
+    const found = libById(id);
+    if (!found) return out;
+    const prefix = libPrefix();
+    for (const row of libLeafRows(found, prefix)) {
+      const key = libTagKey(id, row.p, row.t);
+      if (overIsRemoved(key)) continue;
+      const rn = overRename(key);
+      const tag = rn && rn.t ? rn.t : row.t;
+      const cn = rn && rn.cn ? rn.cn : row.cn || "";
+      if (q && !(lowerOf(tag).includes(q) || lowerOf(cn).includes(q))) continue;
+      push({ key, tag, cn, mid: row.p.join(" / "), kind: "lib", lib, cat: row.p.join(" / "), sub: "" });
+    }
+    return out;
+  }
+  // 内置标签库：三级（分类 → 子分类 → 标签）
+  const group = (tagLib.groups || []).find((g) => String(g.n || "") === tagLib.cat);
+  const subs = group && Array.isArray(group.s) ? group.s : [];
+  let limit = 6000;
+  for (const sub of subs) {
+    const subName = String(sub.n || "");
+    if (overIsRemoved(keySub("tags", tagLib.cat, subName))) continue;
+    if (tagLib.sub && subName !== tagLib.sub) continue;
+    for (const item of sub.t || []) {
+      const tag = String(item[0] || "");
+      const key = keyTag("tags", tagLib.cat, subName, tag);
+      if (overIsRemoved(key)) continue;
+      const rn = overRename(key);
+      const shownTag = rn && rn.t ? rn.t : tag;
+      const cn = rn && rn.cn ? rn.cn : String(item[1] || "");
+      const mv = overMoved(key);
+      const effCat = mv && mv.cat ? mv.cat : tagLib.cat;
+      const effSub = mv && mv.sub ? mv.sub : subName;
+      if (tagLib.sub && effSub !== tagLib.sub) continue;
+      if (q && !(lowerOf(shownTag).includes(q) || lowerOf(cn).includes(q))) continue;
+      push({ key: keyTag("tags", effCat, effSub, tag), tag: shownTag, cn, mid: effSub, kind: "tags", lib: "tags", cat: effCat, sub: effSub });
+      limit -= 1;
+      if (limit <= 0) return out;
+    }
+  }
+  if (tagLib.sub) {
+    for (const add of tagOver.added[keySub("tags", tagLib.cat, tagLib.sub)] || []) {
+      const key = keyTag("tags", tagLib.cat, tagLib.sub, add.t);
+      if (overIsRemoved(key)) continue;
+      push({ key, tag: add.t, cn: add.cn || "", mid: tagLib.sub, kind: "tags", lib: "tags", cat: tagLib.cat, sub: tagLib.sub });
+    }
+  }
+  return out;
+};
+
+const tagMatches = () => tagRows();
+
+// ── 插入 ────────────────────────────────────────────────────────────────
+const charInsertText = (row) => {
+  const parts = [row.tag, row.series, row.appearance, row.clothing]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  return parts.join(", ");
+};
+
+const editorInsertTag = (text) => {
+  const value = String(text || "").trim();
+  if (!value) return;
+  const dom = editorState.dom;
+  if (!dom) return;
+  const key = dom.lastKey === "text" ? "text" : "desc";
+  const area = dom.areas && dom.areas[key];
+  const old = String((area && area.value) || "");
+  const selStart = area && typeof area.selectionStart === "number" ? area.selectionStart : old.length;
+  const selEnd = area && typeof area.selectionEnd === "number" ? area.selectionEnd : old.length;
+  const before = old.slice(0, selStart);
+  const after = old.slice(selEnd);
+  const needComma = before.trim().length > 0 && !/,\s*$/.test(before) && !/^\s*,/.test(after);
+  const insert = (needComma ? ", " : "") + value;
+  const next = before + insert + after;
+  if (area) {
+    area.value = next;
+    try { area.selectionStart = area.selectionEnd = before.length + insert.length; } catch (error) { /* 忽略 */ }
+  }
+  editorWriteField(key, next);
+  editorSchedulePreview();
+};
+
+const tagLibInsert = (row) => {
+  if (!row) return;
+  editorPushUndo();
+  const text = row.kind === "chars" ? charInsertText(row) : String(row.tag || "");
+  editorInsertTag(text);
+};
+
+// ── 选择模式 ────────────────────────────────────────────────────────────
+const tagLibSelectedCount = () => tagLibSel.size;
+const tagLibToggleSelect = (key) => {
+  if (!tagLib.selectMode) return;
+  if (!key) return;
+  if (tagLibSel.has(key)) tagLibSel.delete(key);
+  else tagLibSel.add(key);
+  renderTagLib();
+};
+
+// ── 编辑 / 移动 / 删除 ──────────────────────────────────────────────────
+const tagLibDeleteKeys = (keys) => {
+  const list = Array.from(new Set(keys || []));
+  if (!list.length) return;
+  editorPushUndo();
+  for (const item of list) {
+    const parts = item.split("|");
+    const head = parts[0];
+    if (head.startsWith("lib:")) {
+      const parsed = tagLibKeyParse(item);
+      const found = parsed && libById(parsed.id);
+      if (!found || !parsed) continue;
+      if (parsed.kind === "cat") {
+        const target = parsed.path;
+        found.cats = (found.cats || []).filter((c) => !pathUnder(c.p, target));
+        found.tags = (found.tags || []).filter((row) => !pathUnder(row.p, target));
+        const selNow = libPrefix();
+        if (selNow.length >= target.length && pathUnder(selNow, target)) {
+          tagLib.sel = selNow.slice(0, Math.max(0, target.length - 1));
+        }
+      } else if (parsed.kind === "tag") {
+        found.tags = (found.tags || []).filter((row) => !(pathSame(row.p, parsed.path) && row.t === parsed.tag));
+      }
+      continue;
+    }
+    tagOver.removed[item] = 1;
+    const p2 = item.split("|");
+    if (p2[0] === "tags") {
+      if (p2[1] === "cat" && tagLib.cat === p2[2]) { tagLib.cat = ""; tagLib.sub = ""; }
+      if (p2[1] === "sub" && tagLib.sub === p2[3]) tagLib.sub = "";
+    }
+    if (p2[0] === "chars" && p2[1] === "series" && tagLib.series === p2[2]) tagLib.series = "";
+    // 自己新增出来的对象：从「新增记录」里真删掉，否则只打隐藏标记它还会被重新列出来
+    const added = tagOver.added || {};
+    const nameOf = (entry) => String(entry && (entry.t || entry.name) || "");
+    const dropFrom = (bucketKey, name) => {
+      if (!Object.prototype.hasOwnProperty.call(added, bucketKey)) return;
+      const bucket = Array.isArray(added[bucketKey]) ? added[bucketKey] : [];
+      added[bucketKey] = bucket.filter((entry) => nameOf(entry) !== name);
+    };
+    if (p2[0] === "tags" && p2[1] === "cat") {
+      const catName = p2[2];
+      dropFrom("tags|cat|", catName);
+      delete added[keyCat("tags", catName)];
+      Object.keys(added).forEach((bucketKey) => {
+        if (bucketKey.startsWith("tags|sub|" + catName + "|")) delete added[bucketKey];
+      });
+    } else if (p2[0] === "tags" && p2[1] === "sub") {
+      dropFrom(keyCat("tags", p2[2]), p2[3]);
+      delete added[keySub("tags", p2[2], p2[3])];
+    } else if (p2[0] === "tags" && p2[1] === "tag") {
+      dropFrom(keySub("tags", p2[2], p2[3]), p2[4]);
+    } else if (p2[0] === "chars" && p2[1] === "series") {
+      dropFrom("chars|series", p2[2]);
+      delete added[keySeries(p2[2])];
+    } else if (p2[0] === "chars" && p2[1] === "char") {
+      dropFrom(keySeries(p2[2]), p2[3]);
+    } else if (p2[0] === "mine") {
+      tagOver.fav = (tagOver.fav || []).filter((entry) => nameOf(entry) !== p2[2]);
+    }
+  }
+  saveTagOver();
+  if (tagLibSel && tagLibSel.size) tagLibSel.clear();
+  renderTagLib();
+};
+
+const tagLibTwoStep = (() => {
+  let armed = "";
+  let timer = 0;
+  let lastBtn = null;
+  const reset = () => {
+    armed = "";
+    if (timer) clearTimeout(timer);
+    timer = 0;
+    if (lastBtn) {
+      lastBtn.textContent = lastBtn.dataset.yxLabel || "删除";
+      lastBtn.classList.remove("yx-tag-act-warn");
+      lastBtn = null;
+    }
+  };
+  return (key, label, run, btn) => {
+    if (armed !== key) {
+      reset();
+      armed = key;
+      lastBtn = btn || null;
+      if (lastBtn) {
+        if (lastBtn.dataset.yxLabel === undefined) lastBtn.dataset.yxLabel = lastBtn.textContent;
+        lastBtn.textContent = "确认";
+        lastBtn.classList.add("yx-tag-act-warn");
+      }
+      timer = setTimeout(reset, 4000);
+      showToast("再点一次「确认」就删掉：" + label + "（4 秒内有效）");
+      return;
+    }
+    reset();
+    run();
+  };
+})();
+
+// 删除就地二次确认：第一次点变红色「确认」，第二次才真删
+const armConfirm = (btn, onConfirm, text) => {
+  if (!btn) return false;
+  const label = text || "确认";
+  const old = btn.textContent;
+  btn.__yxArmed = true;
+  btn.textContent = label;
+  btn.classList.add("yx-tag-act-warn");
+  const timer = setTimeout(() => {
+    btn.__yxArmed = false;
+    btn.textContent = old;
+    btn.classList.remove("yx-tag-act-warn");
+  }, 4000);
+  btn.__yxArmRun = () => {
+    clearTimeout(timer);
+    btn.__yxArmed = false;
+    btn.textContent = old;
+    btn.classList.remove("yx-tag-act-warn");
+    onConfirm();
+  };
+  return true;
+};
+
+const tagLibConfirmSpan = (label, title, onConfirm) => {
+  const span = el("span", "yx-tag-cact", label);
+  span.title = title || "点一次变确认，再点一次才执行";
+  let armed = false;
+  let timer = 0;
+  const disarm = () => {
+    armed = false;
+    if (timer) clearTimeout(timer);
+    timer = 0;
+    span.textContent = label;
+    span.classList.remove("yx-tag-act-warn");
+  };
+  span.addEventListener("click", (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!armed) {
+      armed = true;
+      span.textContent = "确认";
+      span.classList.add("yx-tag-act-warn");
+      timer = setTimeout(disarm, 4000);
+      return;
+    }
+    disarm();
+    onConfirm();
+  });
+  return span;
+};
+
+const tagLibFavList = () => (Array.isArray(tagOver.fav) ? tagOver.fav : []);
+
+const tagLibFavHas = (row) => {
+  const key = String(row && row.key || "");
+  const tag = String(row && row.tag || "");
+  return (tagOver.fav || []).some((entry) => (key && String(entry.key || "") === key) || (!key && String(entry.t || "") === tag));
+};
+
+const tagLibRemoveFav = (row) => {
+  const key = String(row && row.key || "");
+  const tag = String(row && row.tag || "");
+  const before = (tagOver.fav || []).length;
+  tagOver.fav = (tagOver.fav || []).filter((entry) => !((key && String(entry.key || "") === key) || (!key && String(entry.t || "") === tag)));
+  if ((tagOver.fav || []).length === before) return false;
+  editorPushUndo();
+  saveTagOver();
+  renderTagLib();
+  return true;
+};
+
+const tagLibAddFav = (row) => {
+  if (!row) return;
+  if (!Array.isArray(tagOver.fav)) tagOver.fav = [];
+  const hit = tagOver.fav.find((item) => item.key === row.key);
+  editorPushUndo();
+  const payload = {
+    key: row.key || keyTag(row.lib || "tags", row.cat, row.sub, row.tag),
+    t: row.tag,
+    cn: row.cn || "",
+    mid: row.mid || row.series || "",
+    kind: row.kind,
+    lib: row.lib,
+    app: row.appearance || "",
+    cloth: row.clothing || "",
+  };
+  if (hit) Object.assign(hit, payload);
+  else tagOver.fav.unshift(payload);
+  saveTagOver();
+  showToast(hit ? "已在收藏里：" + row.tag : "已收藏：" + row.tag);
+  renderTagLib();
+};
+
+const openTagMoveDialog = (keys, label) => {
+  const list = Array.from(new Set(keys || []));
+  if (!list.length) return;
+  ensureEditorStyle();
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", "移动：" + label));
+  box.appendChild(el("div", "yx-tagact-note", "先选目标库：库有几层就出现几个分类选项。可以下拉选已有分类，也可以直接输入新名字（移动时自动新建）。"));
+  const libs = [{ id: "tags", name: "原始标签" }, { id: "chars", name: "角色库" }]
+    .concat(libList().map((lib) => ({ id: "lib:" + lib.id, name: lib.name })));
+  const rowLib = el("div", "yx-set-row");
+  rowLib.appendChild(el("span", "yx-set-lab", "库"));
+  const libSel = el("select", "yx-set-input");
+  for (const item of libs) { const opt = el("option", "", item.name); opt.value = item.id; libSel.appendChild(opt); }
+  rowLib.appendChild(libSel);
+  box.appendChild(rowLib);
+  const host = el("div", "yx-tagact-levels");
+  box.appendChild(host);
+  const levels = [];
+  const targetLib = () => String(libSel.value || "tags");
+  const build = () => {
+    host.textContent = "";
+    levels.length = 0;
+    const target = targetLib();
+    const isLib = target.startsWith("lib:");
+    const found = isLib ? libById(target.slice(4)) : null;
+    const depthCount = isLib ? Math.max(0, libLevelsOf(found) - 1) : (target === "tags" ? 2 : 1);
+    if (!depthCount) {
+      host.appendChild(el("div", "yx-set-note", isLib ? "这个库只有一层：会直接放进库里。" : "角色库只有一层（作品系列）。"));
+    }
+    for (let depth = 1; depth <= depthCount; depth += 1) {
+      const line = el("div", "yx-set-row");
+      line.appendChild(el("span", "yx-set-lab", depth === 1 ? "一级分类" : "第 " + depth + " 级分类"));
+      const sel = el("select", "yx-set-input");
+      const search = el("input", "yx-set-input yx-pick-search");
+      search.placeholder = "搜索…";
+      const input = el("input", "yx-set-input");
+      input.placeholder = "下拉选已有，或输入新名字";
+      line.appendChild(search);
+      line.appendChild(sel);
+      line.appendChild(input);
+      host.appendChild(line);
+      const cur = { sel, input, search, depth, q: "" };
+      const fill = () => {
+        const at = levels.indexOf(cur);
+        const prefix = [];
+        for (let k = 0; k < at; k += 1) {
+          const prev = levels[k];
+          prefix.push(String(prev.input.value || prev.sel.value || "").trim());
+        }
+        const keep = String(sel.value || "");
+        sel.textContent = "";
+        const empty = el("option", "", "（未选）");
+        empty.value = "";
+        sel.appendChild(empty);
+        let names = [];
+        if (isLib) {
+          names = libCatItems(found, depth, prefix).map((it) => it.name);
+        } else if (target === "tags") {
+          if (depth === 1) names = (tagLib.groups || []).map((g) => String(g.n || ""));
+          else {
+            const cat = prefix[0] || "";
+            const group = (tagLib.groups || []).find((g) => String(g.n || "") === cat);
+            names = ((group && group.s) || []).map((x) => String(x.n || ""));
+          }
+        } else {
+          names = (tagLib.seriesList || []).map((x) => String(x.name || "")).slice(0, 200);
+        }
+        const needle = String(cur.q || "").trim().toLowerCase();
+        if (needle) names = names.filter((name) => String(name).toLowerCase().includes(needle));
+        for (const name of names) { const opt = el("option", "", name); opt.value = name; sel.appendChild(opt); }
+        if (keep && names.includes(keep)) sel.value = keep;
+      };
+      cur.search.addEventListener("input", () => { cur.q = String(cur.search.value || ""); fill(); });
+      levels.push(cur);
+      if (depth > 1) {
+        const prev = levels[depth - 2];
+        prev.sel.addEventListener("change", fill);
+        prev.input.addEventListener("input", fill);
+      }
+      fill();
+    }
+  };
+  libSel.addEventListener("change", build);
+  build();
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "移动");
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    const target = targetLib();
+    const names = levels.map((item) => String(item.input.value || item.sel.value || "").trim());
+    for (let i = 0; i < names.length; i += 1) {
+      if (!names[i] && names.slice(i + 1).some(Boolean)) { showToast("分类要按顺序填：第 " + (i + 1) + " 级不能空"); return; }
+    }
+    const path = names.filter(Boolean);
+    editorPushUndo();
+    if (target.startsWith("lib:")) {
+      const id = target.slice(4);
+      const found = libById(id);
+      if (!found) { showToast("目标库不存在"); return; }
+      for (let k = 1; k <= path.length; k += 1) {
+        const pp = path.slice(0, k);
+        if (!(found.cats || []).some((c) => pathSame(c.p, pp))) found.cats.push({ p: pp.slice() });
+      }
+      for (const item of list) {
+        const src = findRowByKey(item);
+        if (!src) continue;
+        found.tags.push({ p: path.slice(), t: src.tag, cn: src.cn || "" });
+        if (item.startsWith("lib:")) {
+          const parsed = tagLibKeyParse(item);
+          const from = parsed && libById(parsed.id);
+          if (from) {
+            if (parsed.kind === "tag") from.tags = (from.tags || []).filter((row) => !(pathSame(row.p, parsed.path) && row.t === parsed.tag));
+            else {
+              from.cats = (from.cats || []).filter((c) => !pathUnder(c.p, parsed.path));
+              from.tags = (from.tags || []).filter((row) => !pathUnder(row.p, parsed.path));
+            }
+          }
+        } else {
+          tagOver.removed[item] = 1;
+        }
+      }
+      tagLib.sel = path.slice(0, Math.max(0, libLevelsOf(found) - 1));
+    } else if (target === "chars") {
+      const series = path[0] || "";
+      if (!series) { showToast("要选一个作品系列"); return; }
+      for (const item of list) {
+        const src = findRowByKey(item);
+        if (!src) continue;
+        const bucket = tagOver.added[keySeries(series)] || [];
+        bucket.push({ t: src.tag, cn: src.cn || "", app: src.appearance || "", cloth: src.clothing || "" });
+        tagOver.added[keySeries(series)] = bucket;
+        const seriesList = tagOver.added["chars|series"] || [];
+        if (!seriesList.some((x) => x.t === series)) seriesList.push({ t: series });
+        tagOver.added["chars|series"] = seriesList;
+        tagOver.removed[item] = 1;
+      }
+      tagLib.series = series;
+    } else {
+      const cat = path[0] || "";
+      const sub = path[1] || "";
+      if (!cat) { showToast("一级分类不能为空"); return; }
+      for (const item of list) {
+        const src = findRowByKey(item);
+        if (!src) continue;
+        tagOver.moved[item] = { cat, sub, lib: target };
+      }
+      tagLib.cat = cat;
+      tagLib.sub = sub;
+    }
+    saveTagOver();
+    tagLibSel.clear();
+    close();
+    renderTagLib();
+  });
+};
+
+const findRowByKey = (key) => {
+  const rows = tagRows();
+  return rows.find((row) => row.key === key) || null;
+};
+
+const tagLibEditDialog = (row) => {
+  if (!row) return;
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", "编辑：" + (row.tag || "")));
+  const mkRow = (label, value, placeholder) => {
+    const line = el("div", "yx-set-row");
+    line.appendChild(el("span", "yx-set-lab", label));
+    const input = el("input", "yx-set-input");
+    input.value = value || "";
+    input.placeholder = placeholder || "";
+    line.appendChild(input);
+    box.appendChild(line);
+    return input;
+  };
+  const tagIn = mkRow("英文 tag", row.tag, "要插入输入框的英文内容");
+  const cnIn = mkRow("中文 / 别名", row.cn, row.kind === "chars" ? "角色的中文名或别名" : "中文说明");
+  let appIn = null;
+  let clothIn = null;
+  if (row.kind === "chars") {
+    appIn = mkRow("外貌 tag", row.appearance, "例如 1girl, long hair（逗号分隔）");
+    clothIn = mkRow("服装 tag", row.clothing, "例如 santa hat, santa costume");
+  }
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "保存");
+  if (tagLibFavHas(row)) {
+    const unpin = el("button", "yx-chip", "取消收藏");
+    unpin.type = "button";
+    unpin.addEventListener("click", () => {
+      editorPushUndo();
+      tagLibRemoveFav(row);
+      close();
+      renderTagLib();
+      showToast("已取消收藏");
+    });
+    foot.appendChild(unpin);
+  }
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    editorPushUndo();
+    const nextTag = String(tagIn.value || "").trim();
+    const nextCn = String(cnIn.value || "").trim();
+    if (!nextTag) { showToast("英文 tag 不能为空"); return; }
+    const patch = { t: nextTag, cn: nextCn };
+    if (appIn) patch.app = String(appIn.value || "").trim();
+    if (clothIn) patch.cloth = String(clothIn.value || "").trim();
+    tagOver.rename[row.key] = patch;
+    if (row.kind === "mine") {
+      const target = (tagOver.mine || []).find((item) => keyMine(item.t) === row.key || item.t === row.tag);
+      if (target) { target.t = nextTag; target.cn = nextCn; }
+    }
+    if (row.kind === "chars" && (patch.app !== undefined || patch.cloth !== undefined)) {
+      const list = tagOver.mine || [];
+      void list;
+      // 角色信息单独存一份，避免污染 rename 结构
+      if (!tagOver.added["chars|edit"]) tagOver.added["chars|edit"] = [];
+      const edits = tagOver.added["chars|edit"];
+      const hit = edits.find((item) => item.t === row.key);
+      if (hit) { hit.app = patch.app; hit.cloth = patch.cloth; }
+      else edits.push({ t: row.key, app: patch.app, cloth: patch.cloth });
+    }
+    saveTagOver();
+    close();
+    renderTagLib();
+  });
+};
+
+const tagLibAddDialog = (lib, cat, sub) => {
+  ensureEditorStyle();
+  const libName = lib === "tags" ? "原始标签" : lib === "chars" ? "角色库" : lib === "mine" ? "收藏"
+    : lib.startsWith("lib:") ? ((libById(lib.slice(4)) || {}).name || "自定义库") : "Tag 库";
+  const found = lib.startsWith("lib:") ? libById(lib.slice(4)) : null;
+  const prefix = lib.startsWith("lib:") ? libPrefix() : [];
+  const levels = found ? Math.max(1, Number(found.levels) || 1) : 0;
+  let depth = 1;
+  let leaf = true;
+  let leafKind = "tag";
+  if (lib === "tags") {
+    if (sub) { depth = 3; leaf = true; leafKind = "tag"; }
+    else if (cat) { depth = 2; leaf = false; }
+    else { depth = 1; leaf = false; }
+  } else if (lib === "chars") {
+    if (cat) { depth = 2; leaf = true; leafKind = "char"; }
+    else { depth = 1; leaf = false; }
+  } else if (lib === "mine") {
+    depth = 1; leaf = true; leafKind = "tag";
+  } else if (found) {
+    depth = prefix.length + 1;
+    leaf = depth >= levels;
+    leafKind = "tag";
+  } else {
+    depth = 1; leaf = true; leafKind = "tag";
+  }
+  const levelName = (n) => (n === 1 ? "一级分类" : n === 2 ? "二级分类" : "第 " + n + " 级分类");
+  const whereCat = prefix.length ? " / " + prefix.join(" / ") : "";
+  const title = leaf
+    ? "新增" + (leafKind === "char" ? "角色" : "标签") + "到：" + libName + (lib === "tags" && cat ? " / " + cat + (sub ? " / " + sub : "") : "") + (lib === "chars" && cat ? " / " + cat : "") + (found ? whereCat : "")
+    : "新增" + levelName(depth) + "到：" + libName + (found ? whereCat : "") + (lib === "tags" && cat && depth === 2 ? " / " + cat : "");
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", title));
+  const mkRow = (label, value, hint, titleHint) => {
+    const line = el("div", "yx-set-row");
+    const lab = el("span", "yx-set-lab", label);
+    if (titleHint) lab.title = titleHint;
+    line.appendChild(lab);
+    const input = el("input", "yx-set-input");
+    input.value = value || "";
+    input.placeholder = hint || "";
+    line.appendChild(input);
+    box.appendChild(line);
+    return input;
+  };
+  let nameIn = null;
+  let cnIn = null;
+  let appIn = null;
+  let clothIn = null;
+  if (!leaf) {
+    nameIn = mkRow(levelName(depth) === "一级分类" && lib === "chars" ? "作品名称" : "名称", "", "", "只填名称就够了");
+  } else if (leafKind === "char") {
+    nameIn = mkRow("名称", "", "", "角色的英文名，例如 santa claus");
+    cnIn = mkRow("提示词名字", "", "", "中文名或常用别名，可留空");
+    appIn = mkRow("外貌 tag", "", "1boy, beard, white hair（可留空）", "点击该角色时会一起插入");
+    clothIn = mkRow("服装 tag", "", "santa hat, santa costume（可留空）", "点击该角色时会一起插入");
+  } else {
+    nameIn = mkRow("提示词", "", "", "点这个标签时真正写进输入框的文字，例如 long hair");
+    cnIn = mkRow("显示名称", "", "", "卡片上显示的名字，可留空（留空就显示上面的提示词）");
+  }
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "添加");
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    const name = String(nameIn && nameIn.value || "").trim();
+    const cn = String(cnIn && cnIn.value || "").trim();
+    if (!name) { showToast(leaf ? "内容不能为空" : "名称不能为空"); return; }
+    editorPushUndo();
+    if (leaf) {
+      if (lib === "mine") {
+        const bucket = tagOver.fav || [];
+        if (!bucket.some((item) => item.t === name)) bucket.push({ t: name, cn, key: "fav|" + name, kind: "tags", lib: "mine" });
+        tagOver.fav = bucket;
+      } else if (leafKind === "char") {
+        const target = String(cat || "").trim() || "未分类";
+        const bucket = tagOver.added[keySeries(target)] || [];
+        bucket.push({ t: name, cn, app: String(appIn && appIn.value || "").trim(), cloth: String(clothIn && clothIn.value || "").trim() });
+        tagOver.added[keySeries(target)] = bucket;
+        if (!(tagOver.added["chars|series"] || []).some((item) => item.t === target)) {
+          const series = tagOver.added["chars|series"] || [];
+          series.push({ t: target });
+          tagOver.added["chars|series"] = series;
+        }
+        tagLib.series = target;
+      } else if (found) {
+        if (!Array.isArray(found.tags)) found.tags = [];
+        found.tags.push({ p: prefix.slice(0), t: name, cn });
+        tagLib.sel = prefix.slice(0);
+      } else if (cat) {
+        const bucket = tagOver.added[keySub("tags", cat, sub || "未分类")] || [];
+        bucket.push({ t: name, cn });
+        tagOver.added[keySub("tags", cat, sub || "未分类")] = bucket;
+        tagLib.sub = sub || "未分类";
+      } else {
+        const bucket = tagOver.added["tags|cat|未分类"] || [];
+        bucket.push({ t: name, cn });
+        tagOver.added["tags|cat|未分类"] = bucket;
+        tagLib.cat = "未分类";
+      }
+    } else if (lib === "chars") {
+      const series = tagOver.added["chars|series"] || [];
+      if (!series.some((item) => item.t === name)) series.push({ t: name });
+      tagOver.added["chars|series"] = series;
+      tagLib.lib = "chars";
+      tagLib.series = name;
+    } else if (found) {
+      if (!Array.isArray(found.cats)) found.cats = [];
+      found.cats.push({ p: prefix.concat(name) });
+      tagLib.sel = prefix.concat(name);
+    } else {
+      const bucket = tagOver.added["tags|cat|"] || [];
+      if (!bucket.some((item) => item.t === name)) bucket.push({ t: name });
+      tagOver.added["tags|cat|"] = bucket;
+      tagLib.lib = "tags";
+      tagLib.cat = name;
+      tagLib.sub = "";
+    }
+    saveTagOver();
+    close();
+    renderTagLib();
+  });
+};
+
+const tagLibAddLibrary = () => {
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", "新建一个库"));
+  box.appendChild(el("div", "yx-tagact-note", "库名称 + 层级数。1 层＝打开就是标签（直接点就插入）；3 层＝一级分类 / 二级分类 / 标签。内容存你自己的用户目录，更新插件不会丢。"));
+  const nameLine = el("div", "yx-set-row");
+  nameLine.appendChild(el("span", "yx-set-lab", "库名称"));
+  const nameIn = el("input", "yx-set-input");
+  nameIn.placeholder = "例如 常用风格";
+  nameLine.appendChild(nameIn);
+  box.appendChild(nameLine);
+  const lvLine = el("div", "yx-set-row");
+  lvLine.appendChild(el("span", "yx-set-lab", "层级数"));
+  const lvIn = el("input", "yx-set-input");
+  lvIn.type = "number";
+  lvIn.min = "1";
+  lvIn.max = "6";
+  lvIn.value = "2";
+  lvLine.appendChild(lvIn);
+  box.appendChild(lvLine);
+  box.appendChild(el("div", "yx-set-note", "1～6 之间的整数：除最底层（标签）外，每层都是分类，只填名称。"));
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "创建");
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    const name = String(nameIn.value || "").trim();
+    const levels = Math.max(1, Math.min(6, Math.round(Number(lvIn.value) || 2)));
+    if (!name) { showToast("库名称不能为空"); return; }
+    editorPushUndo();
+    if (!Array.isArray(tagOver.libs)) tagOver.libs = [];
+    const id = "u" + Date.now().toString(36);
+    tagOver.libs.push({ id, name, levels, cats: [], tags: [] });
+    saveTagOver();
+    libPick("lib:" + id);
+    close();
+    renderTagLib();
+    showToast("已新建「" + name + "」（" + levels + " 层）");
+  });
+};
+
+const openLibAddDialog = () => {
+  const lib = tagLib.lib;
+  if (!lib.startsWith("lib:")) return;
+  const found = libById(lib.slice(4));
+  if (!found) return;
+  const levels = libLevelsOf(found);
+  const prefix = libPrefix().slice(0, Math.max(0, levels - 1));
+  const depth = prefix.length + 1;
+  const isLeaf = depth >= levels;
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", "新增到：" + found.name + (prefix.length ? " / " + prefix.join(" / ") : "")));
+  box.appendChild(el("div", "yx-tagact-note", isLeaf ? "最底层是标签：英文 tag 会插进输入框，中文可留空。" : "第 " + depth + " 层是分类，只需要名称。"));
+  const mkRow = (label, value, ph) => {
+    const line = el("div", "yx-set-row");
+    line.appendChild(el("span", "yx-set-lab", label));
+    const input = el("input", "yx-set-input");
+    input.value = value || "";
+    input.placeholder = ph || "";
+    line.appendChild(input);
+    box.appendChild(line);
+    return input;
+  };
+  const nameIn = mkRow(isLeaf ? "英文 tag" : "名称", "", isLeaf ? "例如 long hair" : "例如 人物");
+  const cnIn = isLeaf ? mkRow("中文", "", "中文说明（可留空）") : null;
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "添加");
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    const name = String(nameIn.value || "").trim();
+    if (!name) { showToast(isLeaf ? "英文 tag 不能为空" : "名称不能为空"); return; }
+    editorPushUndo();
+    if (isLeaf) {
+      found.tags.push({ p: prefix.slice(), t: name, cn: String((cnIn && cnIn.value) || "").trim() });
+      tagOver.removed[libTagKey(found.id, prefix, name)] = 0;
+    } else {
+      const p = prefix.concat([name]);
+      if (!found.cats.some((c) => pathSame(c.p, p))) found.cats.push({ p });
+    }
+    saveTagOver();
+    close();
+    renderTagLib();
+  });
+};
+
+// ── 渲染 ────────────────────────────────────────────────────────────────
+const tagLibChip = (label, count, active, onClick, opts) => {
+  const chip = el("button", "yx-chip yx-tag-lv2chip" + (active ? " yx-tag-lv2chip-on" : ""));
+  chip.type = "button";
+  chip.appendChild(el("span", "yx-tag-lv2name", label));
+  if (typeof count === "number") chip.appendChild(el("span", "yx-tag-lv2num", String(count)));
+  if (opts && opts.key && tagLib.selectMode) {
+    const key = opts.key;
+    const box = el("span", "yx-tag-selbox", tagLibSel.has(key) ? "✓" : "");
+    if (tagLibSel.has(key)) box.classList.add("yx-tag-selbox-on");
+    box.title = "勾选它（连同它下面的全部内容）";
+    box.addEventListener("click", (event) => {
+      event.stopPropagation();
+      tagLibToggleSelect(key);
+      onClick();
+    });
+    chip.appendChild(box);
+  }
+  chip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return chip;
+};
+const overShowName = (key, fallback) => {
+  const rn = key ? overRename(key) : null;
+  return rn && rn.t ? String(rn.t) : String(fallback || "");
+};
+
+const tagLibParentOn = (key) => {
+  if (!key) return false;
+  for (const sel of tagLibSel) {
+    if (sel === key) continue;
+    if (sel.startsWith(key + "|") || sel.startsWith(key + LSEP)) return true;
+  }
+  return false;
+};
+const tagLibKeyParse = (key) => {
+  const text = String(key || "");
+  if (!text.startsWith("lib:")) return null;
+  const p1 = text.indexOf("|");
+  const id = text.slice(4, p1);
+  const rest = text.slice(p1 + 1);
+  const p2 = rest.indexOf("|");
+  const kind = rest.slice(0, p2);
+  const body = rest.slice(p2 + 1);
+  if (kind === "cat") return { id, kind, path: body.split(LSEP).filter(Boolean), tag: "" };
+  const idx = body.lastIndexOf(LSEP);
+  return { id, kind, path: idx < 0 ? [] : body.slice(0, idx).split(LSEP).filter(Boolean), tag: body.slice(idx + 1) };
+};
+
+const tagLibCatRow = (items, label, activeName, onPick, level) => {
+  const wrap = el("div", "yx-tag-crow yx-tag-" + level);
+  wrap.appendChild(el("span", "yx-tag-lvlab yx-tag-" + level + "lab", label));
+  const body = el("div", "yx-tag-cwrap");
+  for (const item of items) {
+    const chip = tagLibChip(item.show || item.name, item.count, item.name === activeName, () => onPick(item.name, item), { key: item.key, path: item.path, level });
+    if (item.key && tagLibSel.size) {
+      if (tagLibSel.has(item.key)) chip.classList.add("yx-tag-sel-on");
+      if (tagLibParentOn(item.key)) chip.classList.add("yx-tag-lv2chip-parent-on");
+    }
+    if (!tagLib.selectMode && item.key) {
+      const acts = el("span", "yx-tag-cacts");
+      const edit = el("span", "yx-tag-cact", "✎");
+      edit.title = "编辑名称";
+      edit.addEventListener("click", (event) => {
+        event.stopPropagation();
+        tagLibEditChip(item, level);
+      });
+      const del = tagLibConfirmSpan("✕", "删除这一层对象（再点一次确认）", () => {
+        tagLibDeleteKeys(collectKeys(item.key));
+      });
+      acts.appendChild(edit);
+      acts.appendChild(del);
+      chip.appendChild(acts);
+    }
+    body.appendChild(chip);
+  }
+  const add = el("button", "yx-chip yx-tag-cadd", "＋");
+  add.type = "button";
+  add.title = "在这一层新增";
+  add.addEventListener("click", () => {
+    add.title = tagLib.lib.startsWith("lib:") ? "在当前这一层新增分类/标签" : "在这一层新增";
+    if (tagLib.lib.startsWith("lib:")) { openLibAddDialog(); return; }
+    if (label === "一级分类") tagLibAddDialog(tagLib.lib, "", "");
+    else tagLibAddDialog(tagLib.lib, tagLib.cat, "");
+  });
+  body.appendChild(add);
+  wrap.appendChild(body);
+  return wrap;
+};
+
+const collectKeys = (key) => {
+  const text = String(key || "");
+  const parts = text.split("|");
+  if (parts[0] === "chars" && parts[1] === "series") {
+    const series = parts[2];
+    const rows = (tagLib.charsBySeries && tagLib.charsBySeries.get(series)) || [];
+    return rows.map((row) => keyChar(String(row[0] || ""))).concat([text]);
+  }
+  if (parts[0] === "tags" && parts[1] === "cat") {
+    const cat = parts[2];
+    const out = [text];
+    const group = (tagLib.groups || []).find((g) => String(g.n || "") === cat);
+    for (const sub of (group && group.s) || []) {
+      const subName = String(sub.n || "");
+      out.push(keySub("tags", cat, subName));
+      for (const item of sub.t || []) out.push(keyTag("tags", cat, subName, String(item[0] || "")));
+      for (const add of tagOver.added[keySub("tags", cat, subName)] || []) out.push(keyTag("tags", cat, subName, String(add.t || "")));
+    }
+    for (const add of tagOver.added[keyCat("tags", cat)] || []) out.push(keySub("tags", cat, String(add.t || "")));
+    return out;
+  }
+  if (parts[0] === "tags" && parts[1] === "sub") {
+    const cat = parts[2];
+    const sub = parts[3];
+    const out = [text];
+    const group = (tagLib.groups || []).find((g) => String(g.n || "") === cat);
+    const subRow = ((group && group.s) || []).find((item) => String(item.n || "") === sub);
+    for (const item of (subRow && subRow.t) || []) out.push(keyTag("tags", cat, sub, String(item[0] || "")));
+    for (const add of tagOver.added[keySub("tags", cat, sub)] || []) out.push(keyTag("tags", cat, sub, String(add.t || "")));
+    return out;
+  }
+  return [text];
+};
+
+const tagLibEditChip = (item, level) => {
+  const overlay = el("div", "yx-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-tagact-box");
+  box.appendChild(el("div", "yx-tagact-title", "编辑：" + item.name));
+  const line = el("div", "yx-set-row");
+  line.appendChild(el("span", "yx-set-lab", "名称"));
+  const input = el("input", "yx-set-input");
+  input.value = item.name;
+  line.appendChild(input);
+  box.appendChild(line);
+  const foot = el("div", "yx-tagact-foot");
+  const cancel = el("button", "yx-chip", "取消");
+  const ok = el("button", "yx-chip yx-chip-main", "保存");
+  foot.appendChild(cancel);
+  foot.appendChild(ok);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+  ok.addEventListener("click", () => {
+    const name = String(input.value || "").trim();
+    if (!name) { showToast("名称不能为空"); return; }
+    editorPushUndo();
+    tagOver.rename[item.key] = Object.assign({}, overRename(item.key) || {}, { t: name });
+    if (item.path && String(item.key || "").startsWith("lib:")) {
+      const parsed = tagLibKeyParse(item.key);
+      const found = parsed && libById(parsed.id);
+      const oldPath = item.path;
+      if (found && oldPath && oldPath.length) {
+        const nextPath = oldPath.slice(0, -1).concat([name]);
+        for (const cat of found.cats || []) {
+          if (pathUnder(cat.p, oldPath)) cat.p = nextPath.concat(cat.p.slice(oldPath.length));
+        }
+        for (const row of found.tags || []) {
+          if (pathUnder(row.p, oldPath)) row.p = nextPath.concat(row.p.slice(oldPath.length));
+        }
+        const selNow = libPrefix();
+        if (selNow.length >= oldPath.length && pathUnder(selNow, oldPath)) {
+          tagLib.sel = nextPath.concat(selNow.slice(oldPath.length));
+        }
+      }
+    }
+    saveTagOver();
+    close();
+    renderTagLib();
+  });
+};
+
+let tagActsFloat = null;
+let tagActsHideTimer = 0;
+const hideTagActsFloat = () => {
+  if (!tagActsFloat) return;
+  tagActsFloat.style.display = "none";
+};
+const scheduleHideTagActsFloat = () => {
+  if (tagActsHideTimer) clearTimeout(tagActsHideTimer);
+  tagActsHideTimer = setTimeout(hideTagActsFloat, 240);
+};
+const showTagActsFloat = (row, card) => {
+  ensureEditorStyle();
+  if (tagActsHideTimer) { clearTimeout(tagActsHideTimer); tagActsHideTimer = 0; }
+  if (!tagActsFloat) {
+    const bar = el("div", "yx-tag-acts-float");
+    bar.addEventListener("pointerenter", () => {
+      if (tagActsHideTimer) { clearTimeout(tagActsHideTimer); tagActsHideTimer = 0; }
+    });
+    bar.addEventListener("pointerleave", scheduleHideTagActsFloat);
+    document.body.appendChild(bar);
+    tagActsFloat = bar;
+  }
+  const bar = tagActsFloat;
+  while (bar.firstChild) bar.removeChild(bar.firstChild);
+  const add = (label, title, run) => {
+    const btn = el("span", "yx-tag-act", label);
+    btn.title = title;
+    btn.addEventListener("pointerdown", (event) => { event.stopPropagation(); });
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      run();
+    });
+    bar.appendChild(btn);
+    return btn;
+  };
+  if (row.lib !== "mine") {
+    const isFav = tagLibFavHas(row);
+    add(isFav ? "取消收藏" : "收藏", isFav ? "从「收藏」里移除" : "收进「收藏」页签", () => {
+      if (isFav) { tagLibRemoveFav(row); showToast("已取消收藏"); }
+      else { tagLibAddFav(row); showToast("已加入收藏"); }
+      hideTagActsFloat();
+    });
+  }
+  add("编辑", "改名字 / 改中文说明" + (row.kind === "chars" ? " / 改外貌服装" : ""), () => {
+    hideTagActsFloat();
+    tagLibEditDialog(row);
+  });
+  add("移动", "移动到别的分类（也可以新建分类）", () => {
+    hideTagActsFloat();
+    openTagMoveDialog([row.key], row.tag);
+  });
+  const del = add("删除", "删除这个标签（再点一次确认）", () => {});
+  del.addEventListener("click", (event) => {
+    event.stopPropagation();
+    armConfirm(del, () => {
+      hideTagActsFloat();
+      tagLibDeleteKeys([row.key]);
+    }, "删除");
+  });
+  bar.style.display = "flex";
+  const rect = card.getBoundingClientRect();
+  const bh = bar.offsetHeight || 26;
+  const bw = bar.offsetWidth || 220;
+  let left = rect.left + rect.width / 2 - bw / 2;
+  const maxLeft = (window.innerWidth || 1200) - bw - 8;
+  left = Math.max(8, Math.min(maxLeft, left));
+  let top = rect.top - bh - 6;
+  if (top < 8) top = rect.top + rect.height + 6;
+  bar.style.left = Math.round(left) + "px";
+  bar.style.top = Math.round(top) + "px";
+};
+
+const TAG_PAGE = 120;
+const appendTagCards = (rows, host, from, to) => {
+  for (let index = from; index < to && index < rows.length; index += 1) {
+    const row = rows[index];
+    const card = el("div", "yx-tag-card" + (tagLibSel.has(row.key) ? " yx-tag-card-on" : "") + (tagLibSel.size && tagLibParentOn(row.key) ? " yx-tag-card-parent-on" : ""));
+    card.title = row.kind === "chars"
+      ? "点击插入：" + charInsertText(row)
+      : "点击插入：" + row.tag;
+    if (tagLib.selectMode) {
+      const box = el("span", "yx-tag-selbox" + (tagLibSel.has(row.key) ? " yx-tag-selbox-on" : ""), tagLibSel.has(row.key) ? "✓" : "");
+      card.appendChild(box);
+    }
+    if (previewStore.on) {
+      const stamp = previewStore.map && previewStore.map[row.key] || previewStore.map && previewStore.map[row.tag];
+      const thumbWrap = el("div", "yx-tag-card-thumb" + (stamp ? " yx-tag-card-thumb-on" : " yx-tag-card-thumb-empty"));
+      thumbWrap.title = stamp ? "点击看大图（大图里可以换图 / 删图）" : "点击选一张图当这个标签的预览图";
+      thumbWrap.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (stamp) openPreviewViewer(row.key || row.tag);
+        else previewImport(row.key || row.tag);
+      });
+      thumbWrap.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        previewImport(row.key || row.tag);
+      });
+      if (stamp) {
+        const img = el("img", "yx-tag-thumb");
+        img.src = previewUrlFor(row.key || row.tag);
+        img.loading = "lazy";
+        img.title = "点击查看大图";
+        img.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openPreviewViewer(row.key || row.tag);
+        });
+        thumbWrap.appendChild(img);
+      } else {
+        thumbWrap.appendChild(el("span", "yx-tag-pv-add", "＋"));
+      }
+      card.appendChild(thumbWrap);
+    }
+    const cn = el("span", "yx-tag-card-cn", row.cn || row.tag);
+    const en = el("span", "yx-tag-card-en", row.tag);
+    card.appendChild(cn);
+    card.appendChild(en);
+    if (row.kind === "chars" && row.mid) {
+      card.appendChild(el("span", "yx-tag-card-mid", row.mid.slice(0, 48)));
+    } else if (row.kind === "tags" && row.sub) {
+      card.appendChild(el("span", "yx-tag-card-mid", row.sub));
+    }
+    if (!tagLib.selectMode) {
+      card.addEventListener("pointerenter", () => showTagActsFloat(row, card));
+      card.addEventListener("pointerleave", scheduleHideTagActsFloat);
+    }
+    card.addEventListener("click", () => {
+      if (tagLib.selectMode) { tagLibToggleSelect(row.key); return; }
+      tagLibInsert(row);
+    });
+    host.appendChild(card);
+  }
+};
+const paintTagCardGrid = (rows, hostArg) => {
+  const host = hostArg || (tagLib.dom && (tagLib.dom.grid || tagLib.dom.cards));
+  if (!host) return;
+  host.textContent = "";
+  tagLib.gridRows = rows;
+  tagLib.gridHost = host;
+  tagLib.gridShown = 0;
+  if (!rows.length) {
+    host.appendChild(el("div", "yx-tag-empty", tagLib.q ? "没有匹配的标签" : "这一层还没有内容，点右上「＋ 新增」加一个"));
+    return;
+  }
+  appendTagCards(rows, host, 0, Math.min(TAG_PAGE, rows.length));
+  tagLib.gridShown = Math.min(TAG_PAGE, rows.length);
+};
+const tagGridMore = () => {
+  const rows = tagLib.gridRows;
+  const host = tagLib.gridHost;
+  if (!rows || !host) return;
+  const shown = Number(tagLib.gridShown) || 0;
+  if (shown >= rows.length) return;
+  appendTagCards(rows, host, shown, Math.min(shown + TAG_PAGE, rows.length));
+  tagLib.gridShown = Math.min(shown + TAG_PAGE, rows.length);
+};
+
+const tagLibCountLabel = () => {
+  const lib = tagLib.lib;
+  if (lib === "chars") return tagLib.series ? "角色（" + tagLib.series + "）" : "角色";
+  if (lib === "mine") return "收藏内容";
+  if (lib.startsWith("lib:")) return "标签";
+  return "三级内容";
+};
+
+const renderTagLib = () => {
+  const dom = tagLib.dom;
+  if (!dom) return;
+  tagLibRefreshHeader();
+  if (!dom.cards) return;
+  const lib = tagLib.lib;
+  dom.search.placeholder = lib === "chars"
+    ? "搜索：角色英文名 / 中文别名 / 外貌 tag"
+    : lib === "mine" || lib.startsWith("lib:")
+      ? "搜索：英文 tag / 中文说明"
+      : "搜索：英文 tag / 中文说明（当前分类内）";
+  const loading = (lib === "tags" && tagLib.tagsLoading) || (lib === "chars" && tagLib.charsLoading);
+  const err = (lib === "tags" && tagLib.tagsError) || (lib === "chars" && tagLib.charsError) || tagLib.error;
+  if (loading) {
+    dom.lv1.textContent = "";
+    dom.lv2.textContent = "";
+    dom.cards.textContent = "";
+    dom.foot.textContent = "";
+    dom.cards.appendChild(el("div", "yx-tag-empty", lib === "chars" ? "正在读取角色库（首次约 1-3 秒）…" : "正在读取标签库…"));
+    return;
+  }
+  if (err) {
+    dom.lv1.textContent = "";
+    dom.lv2.textContent = "";
+    dom.cards.textContent = "";
+    dom.foot.textContent = "";
+    dom.cards.appendChild(el("div", "yx-tag-empty", err));
+    return;
+  }
+  // 一级
+  dom.lv1.textContent = "";
+  dom.lv2.textContent = "";
+  let lv2 = [];
+  if (lib === "mine") {
+    dom.lv1.appendChild(el("span", "yx-tag-lvlab yx-tag-lv1lab", "这个库只有一层：下面所有标签都能点"));
+  } else if (lib.startsWith("lib:")) {
+    const found = libById(lib.slice(4));
+    const levelName = (depth) => (depth === 1 ? "一级分类" : depth === 2 ? "二级分类" : depth === 3 ? "三级分类" : "第 " + depth + " 级分类");
+    if (found) {
+      const levels = libLevelsOf(found);
+      const sel = libPrefix();
+      if (levels > 1) {
+        let shownRow = false;
+        for (let depth = 1; depth <= levels - 1; depth += 1) {
+          const prefix = sel.slice(0, depth - 1);
+          const items = libCatItems(found, depth, prefix);
+          if (!items.length) break;
+          const active = sel.length >= depth ? sel[depth - 1] : "";
+          dom.lv1.appendChild(tagLibCatRow(items, levelName(depth), active, (name) => {
+            const hit = items.find((it) => it.name === name);
+            if (!hit) return;
+            tagLib.sel = hit.path.slice(0, depth);
+            renderTagLib();
+          }, depth === 1 ? "lv1" : "lv2"));
+          shownRow = true;
+        }
+        if (!shownRow) dom.lv1.appendChild(el("span", "yx-tag-note", "这一层还没有分类：点右边的「＋」加第 1 级分类"));
+      } else {
+        dom.lv1.appendChild(el("span", "yx-tag-note", "这个库只有一层：下面所有标签都能点"));
+      }
+    }
+  } else if (lib === "chars") {
+    const items = lv1List().filter((item) => !tagLib.q || lowerOf(item.name).includes(lowerOf(tagLib.q).trim()));
+    const mineSeries = new Set((tagOver.added["chars|series"] || []).map((item) => String(item.t || "")));
+    const custom = items.filter((item) => mineSeries.has(item.name));
+    const shown = items.filter((item) => !mineSeries.has(item.name)).slice(0, 400).concat(custom);
+    dom.lv1.appendChild(tagLibCatRow(shown, "作品系列", tagLib.series, (name) => { tagLib.series = name; renderTagLib(); }, "lv1"));
+    if (items.length > shown.length) dom.lv1.appendChild(el("span", "yx-tag-note", "（系列太多，搜索框可以缩小范围；显示前 " + shown.length + " 个）"));
+  } else {
+    const items = lv1List();
+    if (!tagLib.cat && items.length) tagLib.cat = items[0].name;
+    dom.lv1.appendChild(tagLibCatRow(items, "一级分类", tagLib.cat, (name) => { tagLib.cat = name; tagLib.sub = ""; renderTagLib(); }, "lv1"));
+    lv2 = lv2List();
+    if (lv2.length) {
+      dom.lv2.appendChild(tagLibCatRow(lv2, "二级分类", tagLib.sub, (name) => {
+        tagLib.sub = tagLib.sub === name ? "" : name;
+        renderTagLib();
+      }, "lv2"));
+    }
+  }
+  // 三级
+  dom.cards.textContent = "";
+  dom.foot.textContent = "";
+  const rows = tagRows();
+  const head = el("div", "yx-tag-lv3head");
+  head.appendChild(el("span", "yx-tag-lvlab yx-tag-lv3lab", tagLibCountLabel()));
+  head.appendChild(el("span", "yx-tag-lv3count", "共 " + rows.length + " 个"));
+  const spacer = el("span", "yx-tag-lv3space");
+  head.appendChild(spacer);
+  if (!tagLib.selectMode) {
+    const add = el("button", "yx-chip yx-tag-cadd", "＋ 新增");
+    add.type = "button";
+    add.title = "往这一层加一个标签";
+    add.addEventListener("click", () => {
+
+      if (tagLib.lib.startsWith("lib:")) openLibAddDialog();
+      else if (tagLib.lib === "chars") tagLibAddDialog("chars", tagLib.series || tagLib.cat || "", "");
+      else tagLibAddDialog("tags", tagLib.cat, tagLib.sub || "未分类");
+    });
+    head.appendChild(add);
+  }
+  dom.cards.appendChild(head);
+  const grid = el("div", "yx-tag-grid");
+  dom.cards.appendChild(grid);
+  dom.grid = grid;
+  paintTagCardGrid(rows, grid);
+  dom.foot.textContent = "";
+  dom.foot.appendChild(el("span", "yx-tag-note", tagLib.selectMode
+    ? ("已选中 " + tagLibSel.size + " 个 · 用底部「移动 / 删除」处理")
+    : "点文字插入到光标处；悬停卡片可编辑 / 移动 / 删除"));
+};
+
+const libDeepCopy = (lib) => JSON.parse(JSON.stringify({ name: lib.name, levels: lib.levels, cats: lib.cats || [], tags: lib.tags || [] }));
+
+const openLibMenu = (libId, x, y) => {
+  const found = libById(libId);
+  if (!found) return;
+  const old = document.getElementById("yx-lib-menu");
+  if (old) old.remove();
+  const menu = el("div", "yx-mini-menu");
+  menu.id = "yx-lib-menu";
+  menu.style.position = "fixed";
+  menu.style.left = Math.max(8, Math.round(x)) + "px";
+  menu.style.top = Math.max(8, Math.round(y)) + "px";
+  menu.style.zIndex = "100007";
+  const closeMenu = () => { try { menu.remove(); } catch (error) { /* 忽略 */ } };
+  const item = (label, run) => {
+    const btn = el("button", "yx-mini-item", label);
+    btn.type = "button";
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeMenu();
+      run();
+    });
+    menu.appendChild(btn);
+    return btn;
+  };
+  item("重命名", () => {
+    const next = prompt("库名称", found.name || "");
+    if (next == null) return;
+    const name = String(next).trim();
+    if (!name) { showToast("名称不能为空"); return; }
+    found.name = name;
+    editorPushUndo();
+    saveTagOver();
+    tagLibRefreshHeader();
+    renderTagLib();
+  });
+  item("复制粘贴", () => {
+    const copy = libDeepCopy(found);
+    copy.id = "lib" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    copy.name = found.name || "库";
+    tagOver.libs = tagOver.libs || [];
+    tagOver.libs.push(copy);
+    editorPushUndo();
+    saveTagOver();
+    tagLib.lib = "lib:" + copy.id;
+    tagLib.cat = "";
+    tagLib.sel = [];
+    tagLibRefreshHeader();
+    renderTagLib();
+    showToast("已复制为同名库");
+  });
+  const runDelete = () => {
+    tagOver.libs = (tagOver.libs || []).filter((lib) => lib.id !== libId);
+    editorPushUndo();
+    saveTagOver();
+    if (tagLib.lib === "lib:" + libId) { tagLib.lib = "tags"; tagLib.cat = ""; tagLib.sel = []; }
+    tagLibRefreshHeader();
+    renderTagLib();
+    showToast("已删除该库");
+  };
+  const delBtn = el("button", "yx-mini-item", "删除");
+  delBtn.type = "button";
+  delBtn.title = "点一次变确认，再点一次才删除整个库";
+  delBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (delBtn.__yxArmed && delBtn.__yxArmRun) { delBtn.__yxArmRun(); return; }
+    armConfirm(delBtn, () => { closeMenu(); runDelete(); }, "确认删除");
+  });
+  menu.appendChild(delBtn);
+  document.body.appendChild(menu);
+  const away = (event) => {
+    if (menu.contains(event.target)) return;
+    closeMenu();
+    document.removeEventListener("pointerdown", away, true);
+  };
+  setTimeout(() => document.addEventListener("pointerdown", away, true), 0);
+};
+
+const tagLibRefreshHeader = () => {
+  const head = tagLib.head;
+  if (!head) return;
+  head.textContent = "";
+  head.appendChild(el("span", "yx-tag-title", "Tag 库 · 点文字插入到光标处"));
+  const tabs = el("div", "yx-tag-tabs");
+  const entries = [{ id: "tags", name: "原始标签" }, { id: "chars", name: "角色库" }, { id: "mine", name: "收藏" }]
+    .concat(libList().map((lib) => ({ id: "lib:" + lib.id, name: lib.name })));
+  for (const item of entries) {
+    const btn = el("button", "yx-tag-tab" + (tagLib.lib === item.id ? " yx-tag-tab-on" : ""), item.name);
+    btn.type = "button";
+    btn.title = item.id === "tags" ? "内置原始标签（10 个分类 / 3926 个；可改名、移动、删除、新增）"
+      : item.id === "chars" ? "角色库（74162 个角色，按作品系列；点击会把名字 + 作品 + 外貌 + 服装一起插入）"
+        : item.id === "mine" ? "你收藏的标签（存在用户目录，更新不丢）"
+          : "你新建的库";
+    btn.addEventListener("click", () => tagLibPick(item.id));
+    if (String(item.id).startsWith("lib:")) {
+      btn.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openLibMenu(String(item.id).slice(4), event.clientX, event.clientY);
+      });
+    }
+    tabs.appendChild(btn);
+  }
+  const addLib = el("button", "yx-tag-tabadd", "＋");
+  addLib.type = "button";
+  addLib.title = "新建一个库（可以设置层级数；和 原始标签 / 角色库 / 收藏 并列）";
+  addLib.addEventListener("click", tagLibAddLibrary);
+  tabs.appendChild(addLib);
+  head.appendChild(tabs);
+  const pv = el("label", "yx-tag-pv");
+  const box = el("input", "");
+  box.type = "checkbox";
+  box.checked = !!previewStore.on;
+  box.addEventListener("change", () => {
+    previewStore.on = !!box.checked;
+    savePreviewStore();
+    renderTagLib();
+  });
+  pv.appendChild(box);
+  pv.appendChild(el("span", "", "预览图"));
+  pv.title = "打开后卡片上方显示预览图（你导入过的才有）";
+  head.appendChild(pv);
+};
+
+const tagLibPick = (id) => {
+  tagLib.lib = id;
+  tagLib.cat = "";
+  tagLib.sub = "";
+  tagLib.sel = [];
+  tagLib.series = "";
+  tagLib.q = "";
+  if (tagLib.dom && tagLib.dom.search) tagLib.dom.search.value = "";
+  if (id === "tags") loadTagLib();
+  if (id === "chars") loadCharLib();
+  if (id === "mine" || id.startsWith("lib:")) loadTagOver();
+  renderTagLib();
+};
+
+const tagLibSelectMode = (on) => {
+  tagLib.selectMode = !!on;
+  if (!tagLib.selectMode) tagLibSel.clear();
+  renderTagLib();
+};
+
+const tagLibSelectionAction = (kind, btn) => {
+  const keys = Array.from(tagLibSel);
+  if (!keys.length) { showToast("先打开「选择」并选中对象"); return; }
+  if (kind === "move") { openTagMoveDialog(keys, keys.length + " 个对象"); return; }
+  const run = () => {
+    const all = [];
+    for (const key of keys) all.push.apply(all, collectKeys(key));
+    tagLibDeleteKeys(all);
+    tagLibSel.clear();
+    renderTagLib();
+  };
+  if (!btn) { run(); return; }
+  if (btn.__yxArmed && btn.__yxArmRun) { btn.__yxArmRun(); return; }
+  armConfirm(btn, run, "确认删除");
+};
+
+const openTagAction = (kind, row) => {
+  if (kind === "add") tagLibAddDialog(row && row.lib || tagLib.lib, row && row.cat || tagLib.cat, row && row.sub || "");
+  else tagLibEditDialog(row);
+};
+
+const buildTagLib = (host) => {
+  const dom = {};
+  host.classList.add("yx-tag-lib");
+  const search = el("input", "yx-chip yx-tag-search");
+  search.type = "search";
+  let timer = 0;
+  search.addEventListener("input", () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = 0;
+      tagLib.q = search.value || "";
+      renderTagLib();
+    }, 180);
+  });
+  host.appendChild(search);
+  const scroll = el("div", "yx-tag-scroll");
+  const lv1 = el("div", "yx-tag-row yx-tag-lv1");
+  const lv2 = el("div", "yx-tag-row yx-tag-lv2");
+  const cards = el("div", "yx-tag-lv3");
+  const foot = el("div", "yx-tag-foot");
+  scroll.appendChild(lv1);
+  scroll.appendChild(lv2);
+  scroll.appendChild(cards);
+  scroll.appendChild(foot);
+  host.appendChild(scroll);
+  scroll.addEventListener("scroll", () => {
+    if (scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 260) tagGridMore();
+  });
+  Object.assign(dom, { search, scroll, lv1, lv2, cards, foot });
+  dom.list = cards;
+  tagLib.dom = dom;
+  loadTagOver();
+  loadTagLib();
+  loadPreviewStore();
+  renderTagLib();
+  return dom;
+};
+
+
+  // ── Tag 预览图（用户自己的图片，存用户目录 previews/ 下；与工作流无关）──────────
+  const previewStore = { on: false, map: {}, stamp: Date.now(), loaded: false, loading: false, putTimer: 0, viewer: null };
+  const previewHash = (text) => {
+    let h = 2166136261;
+    const s = String(text || "");
+    for (let i = 0; i < s.length; i += 1) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h.toString(36);
+  };
+  const previewNameFor = (tag) => "p" + previewHash(tag) + ".webp";
+  const previewUrlFor = (tag) => {
+    const name = previewStore.map[String(tag || "")];
+    return name ? "/moss_yxbox/preview/" + name + "?t=" + (previewStore.stamp || 0) : "";
+  };
+  const savePreviewStore = () => {
+    if (previewStore.putTimer) clearTimeout(previewStore.putTimer);
+    previewStore.putTimer = setTimeout(() => {
+      previewStore.putTimer = 0;
+      serverStorePut("preview_index", { v: 1, on: !!previewStore.on, tags: previewStore.map }).catch(() => {});
+    }, 300);
+  };
+  const loadPreviewStore = () => {
+    if (previewStore.loaded || previewStore.loading) return;
+    previewStore.loading = true;
+    serverStoreGet("preview_index")
+      .then((data) => {
+        if (data && typeof data === "object") {
+          previewStore.on = !!data.on;
+          if (data.tags && typeof data.tags === "object") previewStore.map = data.tags;
+        }
+        previewStore.loaded = true;
+        previewStore.loading = false;
+        renderTagLib();
+      })
+      .catch(() => {
+        previewStore.loaded = true;
+        previewStore.loading = false;
+      });
+  };
+  const previewPut = (name, dataUrl) => {
+    const body = JSON.stringify({ data: String(dataUrl || "") });
+    if (globalThis.api && typeof globalThis.api.fetchApi === "function") {
+      return globalThis.api.fetchApi("/moss_yxbox/preview/" + name, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+    }
+    return fetch("/moss_yxbox/preview/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  };
+  const previewRemove = (name) => {
+    const url = "/moss_yxbox/preview/" + name;
+    if (globalThis.api && typeof globalThis.api.fetchApi === "function") {
+      return globalThis.api.fetchApi(url, { method: "DELETE" });
+    }
+    return fetch(url, { method: "DELETE" });
+  };
+  const previewFromFile = (file) => new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const max = 256;
+              const w0 = img.naturalWidth || img.width || 1;
+              const h0 = img.naturalHeight || img.height || 1;
+              const scale = Math.min(1, max / Math.max(w0, h0));
+              const w = Math.max(1, Math.round(w0 * scale));
+              const h = Math.max(1, Math.round(h0 * scale));
+              const cv = document.createElement("canvas");
+              cv.width = w;
+              cv.height = h;
+              const ctx = cv.getContext && cv.getContext("2d");
+              if (!ctx) return resolve("");
+              ctx.drawImage(img, 0, 0, w, h);
+              // 256px 的小图用 WebP（体积约为 PNG 的 1/10），不支持就退回 JPEG / PNG
+              let out = "";
+              try { out = cv.toDataURL ? cv.toDataURL("image/webp", 0.85) : ""; } catch (error) { out = ""; }
+              if (out && out.indexOf("data:image/webp") === 0) resolve(out);
+              else {
+                try { out = cv.toDataURL ? cv.toDataURL("image/jpeg", 0.85) : ""; } catch (error) { out = ""; }
+                resolve(out || (cv.toDataURL ? cv.toDataURL("image/png") : ""));
+              }
+            } catch (error) {
+              resolve("");
+            }
+          };
+          img.onerror = () => resolve("");
+          img.src = String(reader.result || "");
+        } catch (error) {
+          resolve("");
+        }
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    } catch (error) {
+      resolve("");
+    }
+  });
+  const previewImport = (tag) => {
+    const input = el("input", "");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp";
+    input.style.display = "none";
+    try { document.body.appendChild(input); } catch (error) { /* 忽略 */ }
+    input.addEventListener("change", () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      previewFromFile(file).then((dataUrl) => {
+        if (!dataUrl) {
+          showToast("预览图读取失败：请换一张 png / jpg / webp");
+          return;
+        }
+        const name = previewNameFor(tag);
+        previewPut(name, dataUrl)
+          .then((res) => {
+            if (res && res.ok === false) throw new Error("保存失败");
+            previewStore.map[String(tag)] = name;
+            previewStore.stamp = Date.now();
+            savePreviewStore();
+            renderTagLib();
+            showToast("已保存「" + String(tag).slice(0, 24) + "」的预览图");
+          })
+          .catch(() => showToast("预览图保存失败：用户目录不可写？"));
+      });
+      try { input.remove(); } catch (error) { /* 忽略 */ }
+    });
+    input.click();
+  };
+  const previewDeleteTag = (tag) => {
+    const key = String(tag || "");
+    const name = previewStore.map[key];
+    if (!name) return;
+    delete previewStore.map[key];
+    previewStore.stamp = Date.now();
+    savePreviewStore();
+    previewRemove(name).catch(() => {});
+    if (previewStore.viewer) previewStore.viewer.style.display = "none";
+    renderTagLib();
+    showToast("已删除「" + key.slice(0, 24) + "」的预览图");
+  };
+  const buildPreviewViewer = () => {
+    if (previewStore.viewer) return previewStore.viewer;
+    ensureEditorStyle();
+    const overlay = el("div", "yx-modal yx-pv-modal");
+    overlay.style.display = "none";
+    overlay.style.zIndex = "100070";
+    const box = el("div", "yx-pv-box");
+    overlay.appendChild(box);
+    const bar = el("div", "yx-pv-bar");
+    const title = el("div", "yx-pv-title", "");
+    bar.appendChild(title);
+    const grow = el("div", "yx-editor-grow", "");
+    bar.appendChild(grow);
+    box.appendChild(bar);
+    const body = el("div", "yx-pv-body");
+    box.appendChild(body);
+    const foot = el("div", "yx-pv-foot");
+    const replaceBtn = el("button", "yx-chip", "换一张");
+    replaceBtn.type = "button";
+    const delBtn = el("button", "yx-chip", "删除");
+    delBtn.type = "button";
+    const closeBtn = el("button", "yx-chip", "关闭");
+    closeBtn.type = "button";
+    foot.appendChild(replaceBtn);
+    foot.appendChild(delBtn);
+    foot.appendChild(closeBtn);
+    box.appendChild(foot);
+    overlay.addEventListener("pointerdown", (event) => {
+      if (event.target === overlay) overlay.style.display = "none";
+    });
+    document.body.appendChild(overlay);
+    closeBtn.addEventListener("click", () => { overlay.style.display = "none"; });
+    Object.assign(previewStore, { viewer: overlay, pvBody: body, pvTitle: title, pvTag: "" });
+    replaceBtn.addEventListener("click", () => {
+      const tag = String(previewStore.pvTag || "");
+      overlay.style.display = "none";
+      if (tag) previewImport(tag);
+    });
+    let delArmed = false;
+    let delTimer = 0;
+    const disarmDel = () => {
+      delArmed = false;
+      if (delTimer) clearTimeout(delTimer);
+      delTimer = 0;
+      delBtn.textContent = "删除";
+      delBtn.classList.remove("yx-tag-act-warn");
+    };
+    delBtn.addEventListener("click", () => {
+      if (!delArmed) {
+        delArmed = true;
+        delBtn.textContent = "确认删除";
+        delBtn.classList.add("yx-tag-act-warn");
+        delTimer = setTimeout(disarmDel, 4000);
+        return;
+      }
+      disarmDel();
+      previewDeleteTag(previewStore.pvTag);
+    });
+    return overlay;
+  };
+  const openPreviewViewer = (tag) => {
+    const overlay = buildPreviewViewer();
+    const url = previewUrlFor(tag);
+    previewStore.pvTag = String(tag || "");
+    previewStore.pvTitle.textContent = String(tag || "");
+    previewStore.pvBody.textContent = "";
+    const img = el("img", "yx-pv-img");
+    img.src = url || "";
+    img.alt = String(tag || "");
+    previewStore.pvBody.appendChild(img);
+    overlay.style.display = "flex";
+  };
+
+
+// ===== AI 对话（OpenAI 兼容；走后端 /moss_yxbox/chat 代理，流式输出）=====
+const aiStore = { providers: [], active: 0, temperature: 0.8, maxTokens: 1024, contextRounds: 3, loaded: false, loading: false, putTimer: 0 };
+const chatState = { messages: [], busy: false, aborter: null, dom: null, ctx: {}, ctxOpen: false, setOpen: false, compressAt: 14000, attachments: [] };
+
+const aiDefaults = () => ([
+  { name: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", model: "", apiKey: "" },
+  { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", apiKey: "" },
+  { name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", apiKey: "" },
+  { name: "自定义", baseUrl: "", model: "", apiKey: "" },
+]).map((item) => ({ timeoutSec: 300, proxy: "", ...item }));
+
+const activeProvider = () => {
+  if (!Array.isArray(aiStore.providers) || !aiStore.providers.length) aiStore.providers = aiDefaults();
+  const i = Math.max(0, Math.min(aiStore.providers.length - 1, Number(aiStore.active) || 0));
+  return aiStore.providers[i];
+};
+
+const saveAiStore = () => {
+  if (aiStore.putTimer) clearTimeout(aiStore.putTimer);
+  aiStore.putTimer = setTimeout(() => {
+    aiStore.putTimer = 0;
+    serverStorePut("ai", {
+      v: 1,
+      providers: aiStore.providers,
+      active: aiStore.active,
+      temperature: aiStore.temperature,
+      maxTokens: aiStore.maxTokens,
+      contextRounds: aiStore.contextRounds,
+    }).catch(() => {});
+  }, 300);
+};
+
+const loadAiStore = () => {
+  if (aiStore.loaded || aiStore.loading) return;
+  aiStore.loading = true;
+  serverStoreGet("ai")
+    .then((data) => {
+      if (data && typeof data === "object") {
+        if (Array.isArray(data.providers) && data.providers.length) aiStore.providers = data.providers;
+        aiStore.active = Number(data.active) || 0;
+        if (data.temperature !== undefined) aiStore.temperature = Number(data.temperature) || 0.8;
+        if (data.maxTokens !== undefined) aiStore.maxTokens = Number(data.maxTokens) || 1024;
+      }
+      if (!Array.isArray(aiStore.providers) || !aiStore.providers.length) aiStore.providers = aiDefaults();
+      aiStore.loaded = true;
+      aiStore.loading = false;
+      renderChatSettings();
+    })
+    .catch(() => {
+      if (!Array.isArray(aiStore.providers) || !aiStore.providers.length) aiStore.providers = aiDefaults();
+      aiStore.loaded = true;
+      aiStore.loading = false;
+    });
+};
+
+const chatContextText = () => {
+  const lines = [];
+  for (const box of editorBoxes()) {
+    if (!chatState.ctx[box.__yxId]) continue;
+    const label = itemLabel(box);
+    const parts = [];
+    if (box.desc) parts.push("描述：" + String(box.desc));
+    if (box.text) parts.push("文字：" + String(box.text));
+    if (!parts.length) continue;
+    lines.push(label + " " + parts.join("；"));
+  }
+  return lines.join("\n");
+};
+
+// 把一条用户消息（可能是附件拼接出来的）压成纯文本，给 history / 压缩用
+const chatPlain = (content) => {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const texts = [];
+    let images = 0;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "text" && part.text) texts.push(String(part.text));
+      else if (part.type === "image_url") images += 1;
+    }
+    return texts.join("\n") + (images ? "\n（附图 " + images + " 张）" : "");
+  }
+  return "";
+};
+
+const chatBuildMessages = (userText) => {
+  const out = [];
+  const ctx = chatContextText();
+  const sys = [
+    "你是 ComfyUI 插件「MOSS YXBOX 控图排版」里的提示词助手。",
+    "回答用中文，简洁、给可直接用的内容。",
+    ctx ? "当前画布里的对象（用户选择作为上下文）：\n" + ctx : "",
+  ].filter(Boolean).join("\n\n");
+  out.push({ role: "system", content: sys });
+  // 上下文轮数：只把最近 N 轮（N*2 条）带上；0＝只发这一句
+  const rounds = Math.max(0, Math.min(40, Number(aiStore.contextRounds)));
+  const hist = chatState.messages.filter((m) => !m.streaming && chatPlain(m.content).trim());
+  const keep = rounds > 0 ? hist.slice(-rounds * 2) : [];
+  for (const m of keep) out.push({ role: m.role, content: m.content });
+  out.push({ role: "user", content: userText.content === "object" ? userText : String(userText || "") });
+  return out;
+};
+
+// 附件 → 请求里的 content（文本拼进去、图片按 vision 格式带 base64）
+const chatCompose = (text, attachments) => {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (!list.length) return String(text || "");
+  const textParts = [];
+  const imageParts = [];
+  for (const att of list) {
+    if (!att) continue;
+    if (att.kind === "image") imageParts.push({ type: "image_url", image_url: { url: String(att.dataUrl || "") } });
+    else textParts.push("【附件：" + String(att.name || "文本") + "】\n" + String(att.text || "").slice(0, 20000));
+  }
+  const head = String(text || "").trim() || (imageParts.length ? "请看这些图片。" : "");
+  if (!imageParts.length) return [head, ...textParts].filter(Boolean).join("\n\n");
+  const parts = [];
+  if (head) parts.push({ type: "text", text: head });
+  parts.push({ type: "text", text: textParts.join("\n\n") || "" });
+  for (const p of imageParts) parts.push(p);
+  return parts;
+};
+
+const chatScrollEnd = () => {
+  const dom = chatState.dom;
+  if (!dom || !dom.list) return;
+  try { dom.list.scrollTop = dom.list.scrollHeight; } catch (error) { /* 忽略 */ }
+};
+
+const renderChat = () => {
+  const dom = chatState.dom;
+  if (!dom) return;
+  dom.list.textContent = "";
+  if (!chatState.messages.length) {
+    dom.list.appendChild(el("div", "yx-chat-empty", "还没有对话。先在下面输入问题；点「上下文」可以选画布里的框作为参考资料。"));
+  }
+  for (const m of chatState.messages) {
+    const row = el("div", "yx-chat-row " + (m.role === "user" ? "yx-chat-me" : "yx-chat-ai"));
+    const bubble = el("div", "yx-chat-bubble");
+    bubble.textContent = chatPlain(m.content);
+    if (m.streaming) bubble.classList.add("yx-chat-stream");
+    row.appendChild(bubble);
+    dom.list.appendChild(row);
+  }
+  const provider = activeProvider();
+  dom.model.textContent = (provider.name || "未选供应商") + (provider.model ? " · " + provider.model : " · 未填模型");
+  chatScrollEnd();
+};
+
+const chatAttImage = (file) => new Promise((resolve, reject) => {
+  if (!file || file.size > 4 * 1024 * 1024) {
+    reject(new Error("图片太大（限 4MB）"));
+    return;
+  }
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error("读取图片失败"));
+  reader.onload = () => {
+    const url = String(reader.result || "");
+    const img = new Image();
+    img.onerror = () => reject(new Error("这不是能识别的图片"));
+    img.onload = () => resolve({ kind: "image", name: file.name || "image", dataUrl: url, w: img.width, h: img.height });
+    img.src = url;
+  };
+  reader.readAsDataURL(file);
+});
+
+const chatAttText = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error("读取文件失败"));
+  reader.onload = () => {
+    const text = String(reader.result || "").slice(0, 200000);
+    resolve({ kind: "text", name: file.name || "文本", text });
+  };
+  reader.readAsText(file);
+});
+
+const chatAddFiles = async (files) => {
+  const list = Array.prototype.slice.call(files || []);
+  if (!list.length) return;
+  let ok = 0;
+  let bad = "";
+  for (const file of list) {
+    if (!file) continue;
+    const type = String(file.type || "");
+    const name = String(file.name || "");
+    try {
+      if (type.startsWith("image/")) {
+        chatState.attachments.push(await chatAttImage(file));
+      } else if (type.startsWith("text/") || /\.(txt|md|json|csv|log|ya?ml)$/i.test(name)) {
+        chatState.attachments.push(await chatAttText(file));
+      } else {
+        bad = "不支持这种文件：" + name;
+        continue;
+      }
+      ok += 1;
+    } catch (error) {
+      bad = String((error && error.message) || error);
+    }
+  }
+  renderChatAttachments();
+  if (bad) showToast(bad);
+  else if (ok) showToast("已添加 " + ok + " 个附件");
+};
+
+const renderChatAttachments = () => {
+  const dom = chatState.dom;
+  if (!dom || !dom.attList) return;
+  dom.attList.textContent = "";
+  const list = Array.isArray(chatState.attachments) ? chatState.attachments : [];
+  if (!list.length) {
+    dom.attList.classList.add("yx-chat-atts-empty");
+    return;
+  }
+  dom.attList.classList.remove("yx-chat-atts-empty");
+  list.forEach((att, index) => {
+    const chip = el("span", "yx-chat-att-chip", (att.kind === "image" ? "图片：" : "文本：") + String(att.name || "").slice(0, 24));
+    chip.title = att.kind === "image" ? "随问题一起发给 AI（需要模型支持看图）" : "内容会拼在问题前面一起发出去";
+    const del = el("span", "yx-chat-att-del", "×");
+    del.title = "移除这个附件";
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
+      chatState.attachments.splice(index, 1);
+      renderChatAttachments();
+    });
+    chip.appendChild(del);
+    dom.attList.appendChild(chip);
+  });
+};
+
+const chatAbort = () => {
+  if (chatState.aborter) {
+    try { chatState.aborter.abort(); } catch (error) { /* 忽略 */ }
+    chatState.aborter = null;
+  }
+  chatState.busy = false;
+  if (chatState.dom) chatState.dom.send.textContent = "发送";
+};
+
+const chatPost = async (url, body) => {
+  const payload = JSON.stringify(body || {});
+  const api = globalThis.api;
+  const res = api && api.fetchApi
+    ? await api.fetchApi(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload })
+    : await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+  let data = null;
+  try { data = await res.json(); } catch (_error) { data = null; }
+  if (!res.ok || !data || data.ok === false) {
+    const detail = (data && (data.error || (data.data && data.data.error && data.data.error.message))) || ("HTTP " + res.status);
+    throw new Error(String(detail).slice(0, 200));
+  }
+  return data;
+};
+
+const chatStreamOnce = async (messages, onDelta) => {
+  const provider = activeProvider();
+  const adv = (provider.adv && provider.model && provider.adv[provider.model] && provider.adv[provider.model].on) ? provider.adv[provider.model] : null;
+  const ctrl = new AbortController();
+  chatState.aborter = ctrl;
+  const body = JSON.stringify({
+    provider: {
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      model: provider.model,
+      temperature: adv ? adv.temperature : aiStore.temperature,
+      maxTokens: adv ? adv.maxTokens : aiStore.maxTokens,
+      topP: adv ? adv.topP : 1,
+      penalty: adv ? adv.penalty : 0,
+      timeoutSec: Number(provider.timeoutSec) || 300,
+      proxy: String(provider.proxy || ""),
+    },
+    messages,
+    stream: true,
+  });
+  const url = "/moss_yxbox/chat";
+  const res = globalThis.api && globalThis.api.fetchApi
+    ? await globalThis.api.fetchApi(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: ctrl.signal })
+    : await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: ctrl.signal });
+  if (!res || !res.ok) {
+    let detail = "";
+    try { detail = await res.text(); } catch (error) { /* 忽略 */ }
+    throw new Error("请求失败（" + (res ? res.status : "无响应") + "）：" + String(detail).slice(0, 200));
+  }
+  const ctype = String(res.headers && res.headers.get ? res.headers.get("Content-Type") || "" : "");
+  if (ctype.indexOf("text/event-stream") < 0) {
+    const data = await res.json();
+    const text = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
+    if (text) onDelta(String(text));
+    return String(text);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let full = "";
+  while (true) {
+    const step = await reader.read();
+    if (step.done) break;
+    buffer += decoder.decode(step.value, { stream: true });
+    let cut = buffer.indexOf("\n");
+    while (cut >= 0) {
+      const line = buffer.slice(0, cut).trim();
+      buffer = buffer.slice(cut + 1);
+      cut = buffer.indexOf("\n");
+      if (!line || line.indexOf("data:") !== 0) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const json = JSON.parse(payload);
+        const delta = json.choices && json.choices[0] && (json.choices[0].delta || {});
+        const piece = (delta && (delta.content || "")) || "";
+        if (piece) {
+          full += piece;
+          onDelta(piece);
+        }
+      } catch (error) { /* 忽略单行解析失败 */ }
+    }
+  }
+  return full;
+};
+
+const chatCompressIfNeeded = async () => {
+  const total = chatState.messages.reduce((sum, m) => sum + String(m.content || "").length, 0);
+  if (total <= chatState.compressAt || chatState.messages.length < 8) return;
+  const keep = 6;
+  const older = chatState.messages.slice(0, chatState.messages.length - keep);
+  const tail = chatState.messages.slice(chatState.messages.length - keep);
+  const text = older.map((m) => (m.role === "user" ? "用户：" : "助手：") + String(m.content || "")).join("\n").slice(0, 24000);
+  if (!text) return;
+  try {
+    let summary = "";
+    await chatStreamOnce(
+      [
+        { role: "system", content: "把下面的对话压缩成不超过 400 字的中文要点，保留用户的目标、约定与关键结论，不要评论。" },
+        { role: "user", content: text },
+      ],
+      (piece) => { summary += piece; },
+    );
+    if (summary.trim()) {
+      chatState.messages = [{ role: "assistant", content: "（较早对话已压缩）\n" + summary.trim() }].concat(tail);
+      renderChat();
+    }
+  } catch (error) { /* 压缩失败就照常继续 */ }
+};
+
+const chatSend = async () => {
+  const dom = chatState.dom;
+  if (!dom || chatState.busy) return;
+  const text = String(dom.input.value || "").trim();
+  const atts = Array.isArray(chatState.attachments) ? chatState.attachments.slice() : [];
+  if (!text && !atts.length) return;
+  const provider = activeProvider();
+  if (!provider.baseUrl || !provider.model) {
+    showToast("先在「设置」里填好接口地址（baseUrl）和模型名");
+    chatToggle("set");
+    return;
+  }
+  dom.input.value = "";
+  chatState.attachments = [];
+  if (chatState.dom) renderChatAttachments();
+  const userContent = chatCompose(text, atts);
+  chatState.messages.push({ role: "user", content: userContent });
+  const answer = { role: "assistant", content: "", streaming: true };
+  chatState.messages.push(answer);
+  chatState.busy = true;
+  dom.send.textContent = "停止";
+  renderChat();
+  try {
+    await chatCompressIfNeeded();
+    await chatStreamOnce(chatBuildMessages(userContent), (piece) => {
+      answer.content += piece;
+      const rows = chatState.dom && chatState.dom.list ? chatState.dom.list.children : [];
+      const last = rows.length ? rows[rows.length - 1] : null;
+      const bubble = last ? last.children && last.children[0] : null;
+      if (bubble) bubble.textContent = answer.content;
+      chatScrollEnd();
+    });
+  } catch (error) {
+    const message = String((error && error.message) || error || "");
+    if (message.indexOf("abort") >= 0 || message.indexOf("Abort") >= 0) {
+      answer.content += answer.content ? "\n（已停止）" : "（已停止）";
+    } else {
+      answer.content = answer.content || "（出错）" + message;
+      showToast("AI 对话失败：" + message.slice(0, 120));
+    }
+  } finally {
+    answer.streaming = false;
+    chatState.busy = false;
+    if (chatState.aborter) chatState.aborter = null;
+    if (chatState.dom) chatState.dom.send.textContent = "发送";
+    renderChat();
+  }
+};
+
+const renderChatSettings = () => {
+  const dom = chatState.dom;
+  if (!dom || !dom.setBox) return;
+  dom.setBox.textContent = "";
+  if (!chatState.setOpen) { dom.setBox.style.display = "none"; return; }
+  dom.setBox.style.display = "flex";
+  const select = el("select", "yx-chip yx-chat-sel");
+  const providers = Array.isArray(aiStore.providers) && aiStore.providers.length ? aiStore.providers : aiDefaults();
+  providers.forEach((p, i) => {
+    const opt = el("option", "", String(p.name || "供应商 " + (i + 1)));
+    opt.value = String(i);
+    if (i === (Number(aiStore.active) || 0)) opt.selected = true;
+    select.appendChild(opt);
+  });
+  select.addEventListener("change", () => {
+    aiStore.active = Number(select.value) || 0;
+    saveAiStore();
+    renderChatSettings();
+    renderChat();
+  });
+  dom.setBox.appendChild(select);
+
+  const provider = activeProvider();
+  const field = (label, key, value, placeholder) => {
+    const row = el("label", "yx-chat-field");
+    row.appendChild(el("span", "", label));
+    const input = el("input", "yx-chip");
+    input.value = value === undefined || value === null ? "" : String(value);
+    input.placeholder = placeholder || "";
+    input.addEventListener("change", () => {
+      provider[key] = input.value;
+      saveAiStore();
+      if (key === "model" || key === "name") renderChat();
+    });
+    row.appendChild(input);
+    dom.setBox.appendChild(row);
+    return input;
+  };
+  field("名称", "name", provider.name, "给这个供应商起个名字");
+  field("接口地址", "baseUrl", provider.baseUrl, "https://api.example.com/v1");
+  // 密钥默认遮住，旁边「显示 / 隐藏」按钮才看得到（防止旁边有人瞄屏幕）
+  const secretField = (label, key, value, placeholder) => {
+    const row = el("label", "yx-chat-field");
+    row.appendChild(el("span", "", label));
+    const input = el("input", "yx-chip");
+    input.type = "password";
+    input.autocomplete = "off";
+    input.value = value === undefined || value === null ? "" : String(value);
+    input.placeholder = placeholder || "";
+    input.addEventListener("change", () => {
+      provider[key] = input.value;
+      saveAiStore();
+    });
+    row.appendChild(input);
+    const eye = el("button", "yx-chip yx-chat-eye", "显示");
+    eye.type = "button";
+    eye.title = "显示 / 隐藏密钥";
+    eye.addEventListener("click", (event) => {
+      event.preventDefault();
+      const shown = String(input.type || "password") === "text";
+      input.type = shown ? "password" : "text";
+      eye.textContent = shown ? "显示" : "隐藏";
+    });
+    row.appendChild(eye);
+    dom.setBox.appendChild(row);
+    return input;
+  };
+  secretField("API Key", "apiKey", provider.apiKey, "sk-…");
+  field("模型", "model", provider.model, "如 deepseek-chat / gpt-4o-mini");
+  field("温度", "", aiStore.temperature, "0–2，越大越发散").addEventListener("change", (event) => {
+    aiStore.temperature = Math.max(0, Math.min(2, Number(event.target.value) || 0.8));
+    saveAiStore();
+  });
+  field("最大 token", "", aiStore.maxTokens, "如 1024").addEventListener("change", (event) => {
+    aiStore.maxTokens = Math.max(64, Math.min(65536, Math.round(Number(event.target.value) || 1024)));
+    saveAiStore();
+  });
+  const timeoutInp = field("超时（秒）", "", provider.timeoutSec || 300, "等回复的最长时间，长文/图片可调大");
+  timeoutInp.addEventListener("change", (event) => {
+    provider.timeoutSec = Math.max(10, Math.min(1800, Math.round(Number(event.target.value) || 300)));
+    timeoutInp.value = String(provider.timeoutSec);
+    saveAiStore();
+  });
+  const proxyInp = field("代理", "", provider.proxy || "", "可留空；走本地代理时如 http://127.0.0.1:7897");
+  proxyInp.addEventListener("change", (event) => {
+    provider.proxy = String(event.target.value || "").trim();
+    saveAiStore();
+  });
+
+  const addRow = el("div", "yx-chat-addrow");
+  const addBtn = el("button", "yx-chip", "新增供应商");
+  addBtn.type = "button";
+  addBtn.addEventListener("click", () => {
+    aiStore.providers.push({ name: "供应商 " + (aiStore.providers.length + 1), baseUrl: "", model: "", apiKey: "" });
+    aiStore.active = aiStore.providers.length - 1;
+    saveAiStore();
+    renderChatSettings();
+  });
+  const delBtn = el("button", "yx-chip", "删除当前");
+  delBtn.type = "button";
+  delBtn.title = "只删这条供应商配置（不影响你的其他数据）";
+  delBtn.addEventListener("click", () => {
+    if (aiStore.providers.length <= 1) { showToast("至少要留一个供应商"); return; }
+    aiStore.providers.splice(Number(aiStore.active) || 0, 1);
+    aiStore.active = 0;
+    saveAiStore();
+    renderChatSettings();
+    renderChat();
+  });
+  addRow.appendChild(addBtn);
+  addRow.appendChild(delBtn);
+  dom.setBox.appendChild(addRow);
+  dom.setBox.appendChild(el("div", "yx-chat-note", "接口按 OpenAI 兼容格式调用（POST {baseUrl}/chat/completions，Bearer API Key）。配置存在你本机的用户目录里，更新插件不会丢。"));
+};
+
+const renderChatContext = () => {
+  const dom = chatState.dom;
+  if (!dom || !dom.ctxBox) return;
+  dom.ctxBox.textContent = "";
+  if (!chatState.ctxOpen) { dom.ctxBox.style.display = "none"; return; }
+  dom.ctxBox.style.display = "flex";
+  const boxes = editorBoxes();
+  if (!boxes.length) {
+    dom.ctxBox.appendChild(el("div", "yx-chat-note", "画布上还没有框；先加几个框再回来选上下文。"));
+    return;
+  }
+  dom.ctxBox.appendChild(el("div", "yx-chat-note", "勾选要带进对话的框（只取「描述」和「文字」，不会改画布）："));
+  for (const box of boxes) {
+    const row = el("label", "yx-chat-field");
+    const cb = el("input", "");
+    cb.type = "checkbox";
+    cb.checked = !!chatState.ctx[boxKey(box)];
+    cb.addEventListener("change", () => {
+      if (cb.checked) chatState.ctx[boxKey(box)] = true;
+      else delete chatState.ctx[boxKey(box)];
+    });
+    row.appendChild(cb);
+    row.appendChild(el("span", "", itemLabel(box) + (box.desc ? " · " + String(box.desc).slice(0, 40) : "")));
+    dom.ctxBox.appendChild(row);
+  }
+};
+
+const chatToggle = (which) => {
+  if (which === "set") chatState.setOpen = !chatState.setOpen;
+  if (which === "ctx") chatState.ctxOpen = !chatState.ctxOpen;
+  renderChatSettings();
+  renderChatContext();
+};
+
+const buildChatModal = () => {
+  if (chatState.dom && chatState.dom.overlay) return chatState.dom.overlay;
+  ensureEditorStyle();
+  const overlay = el("div", "yx-modal yx-chat-modal");
+  overlay.style.zIndex = "100004";
+  overlay.style.display = "none";
+  const box = el("div", "yx-chat-box");
+  overlay.appendChild(box);
+
+  const head = el("div", "yx-chat-head");
+  head.appendChild(el("div", "yx-chat-title", "AI 对话"));
+  const model = el("div", "yx-chat-model", "");
+  head.appendChild(model);
+  head.appendChild(el("div", "yx-editor-grow", ""));
+  const ctxBtn = el("button", "yx-chip", "上下文");
+  ctxBtn.type = "button";
+  ctxBtn.title = "选择画布里的框，作为对话参考资料（只读，不改画布）";
+  const setBtn = el("button", "yx-chip", "设置");
+  setBtn.type = "button";
+  setBtn.title = "供应商 / 接口地址 / API Key / 模型 / 温度 / 最大 token";
+  const clearBtn = el("button", "yx-chip", "清空对话");
+  clearBtn.type = "button";
+  const closeBtn = el("button", "yx-chip", "关闭");
+  closeBtn.type = "button";
+  head.appendChild(ctxBtn);
+  head.appendChild(setBtn);
+  head.appendChild(clearBtn);
+  head.appendChild(closeBtn);
+  box.appendChild(head);
+
+  const setBox = el("div", "yx-chat-panel");
+  const ctxBox = el("div", "yx-chat-panel");
+  box.appendChild(setBox);
+  box.appendChild(ctxBox);
+
+  const list = el("div", "yx-chat-list");
+  box.appendChild(list);
+
+  const foot = el("div", "yx-chat-foot");
+  const input = el("textarea", "yx-chat-input");
+  input.placeholder = "输入问题，Ctrl+Enter 发送";
+  const send = el("button", "yx-chip yx-chat-send", "发送");
+  send.type = "button";
+  send.title = "发送（流式输出，再点一下可以停止）";
+  const attBar = el("div", "yx-chat-atts");
+  const attBtn = el("button", "yx-chip yx-chat-att", "附件");
+  attBtn.type = "button";
+  attBtn.title = "上传图片或文本文件（.txt/.md/.json/.csv），随问题一起发给 AI";
+  const attList = el("div", "yx-chat-atts-list");
+  attBar.appendChild(attBtn);
+  attBar.appendChild(attList);
+  box.appendChild(attBar);
+  const fileInp = el("input", "yx-chat-file");
+  fileInp.type = "file";
+  fileInp.multiple = true;
+  fileInp.accept = "image/*,.txt,.md,.json,.csv,.log,.yaml,.yml";
+  fileInp.style.display = "none";
+  box.appendChild(fileInp);
+  foot.appendChild(input);
+  foot.appendChild(send);
+  box.appendChild(foot);
+
+  overlay.addEventListener("pointerdown", (event) => {
+    if (event.target === overlay) { overlay.style.display = "none"; state.chatOpen = false; }
+  });
+  closeBtn.addEventListener("click", () => { overlay.style.display = "none"; state.chatOpen = false; });
+  ctxBtn.addEventListener("click", () => chatToggle("ctx"));
+  attBtn.addEventListener("click", () => { try { fileInp.value = ""; } catch (error) { /* 忽略 */ } fileInp.click(); });
+  fileInp.addEventListener("change", () => { chatAddFiles(fileInp.files); });
+  setBtn.addEventListener("click", () => {
+    setState.tab = "ai";
+    openEditorSettings();
+  });
+  clearBtn.addEventListener("click", () => {
+    if (!chatState.messages.length) return;
+    chatState.messages = [];
+    renderChat();
+  });
+  send.addEventListener("click", () => {
+    if (chatState.busy) { chatAbort(); return; }
+    chatSend();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      if (chatState.busy) chatAbort(); else chatSend();
+    }
+  });
+
+  chatState.dom = { overlay, box, head, model, setBox, ctxBox, list, input, send, attBtn, attList, fileInp };
+  renderChat();
+  renderChatSettings();
+  renderChatContext();
+  renderChatAttachments();
+  loadAiStore();
+  return overlay;
+};
+
+const openChatModal = () => {
+  try {
+    const overlay = buildChatModal();
+    overlay.style.display = "flex";
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.zIndex = "100004";
+    overlay.style.pointerEvents = "auto";
+    state.chatOpen = true;
+    try { renderChatSettings(); } catch (error) { console.error("[MOSS YXBOX] 对话设置渲染失败", error); }
+    try { renderChatContext(); } catch (error) { console.error("[MOSS YXBOX] 对话上下文渲染失败", error); }
+    try { renderChatAttachments(); } catch (error) { console.error("[MOSS YXBOX] 附件区渲染失败", error); }
+    try { renderChat(); } catch (error) { console.error("[MOSS YXBOX] 对话记录渲染失败", error); }
+    if (chatState.dom && chatState.dom.input) {
+      try { chatState.dom.input.focus(); } catch (error) { /* 忽略 */ }
+    }
+  } catch (error) {
+    console.error("[MOSS YXBOX] AI 对话打不开", error);
+    showToast("AI 对话打不开：" + String((error && error.message) || error).slice(0, 120));
+  }
+};
+
+  // ===== 编辑库设置（通用 / AI 接口 / 数据）=====
+const setState = { tab: "common", dom: null };
+
+const renderAiSettingsInto = (host) => {
+  host.textContent = "";
+  if (!Array.isArray(aiStore.providers) || !aiStore.providers.length) aiStore.providers = aiDefaults();
+  const providers = aiStore.providers;
+  const active = Math.max(0, Math.min(providers.length - 1, Number(aiStore.active) || 0));
+  aiStore.active = active;
+  const provider = providers[active];
+
+  // 服务商：一排标签（点谁看谁），后面跟「新增」
+  const chips = el("div", "yx-set-chips");
+  providers.forEach((p, i) => {
+    const btn = el("button", "yx-set-chip" + (i === active ? " yx-set-chip-on" : ""), String(p.name || "供应商 " + (i + 1)));
+    btn.type = "button";
+    btn.title = (p.baseUrl || "（还没填接口地址）") + " · " + (p.model || "（还没选模型）");
+    btn.addEventListener("click", () => {
+      aiStore.active = i;
+      saveAiStore();
+      renderAiSettingsInto(host);
+    });
+    chips.appendChild(btn);
+  });
+  const addChip = el("button", "yx-set-chip yx-set-chip-add", "＋新增服务商");
+  addChip.type = "button";
+  addChip.addEventListener("click", () => {
+    providers.push({ name: "新服务商 " + (providers.length + 1), baseUrl: "", model: "", apiKey: "" });
+    aiStore.active = providers.length - 1;
+    saveAiStore();
+    renderAiSettingsInto(host);
+  });
+  chips.appendChild(addChip);
+  host.appendChild(chips);
+
+  const textRow = (label, key, value, placeholder) => {
+    const row = el("div", "yx-set-row");
+    row.appendChild(el("span", "yx-set-lab", label));
+    const input = el("input", "yx-set-input");
+    input.value = value === undefined || value === null ? "" : String(value);
+    input.placeholder = placeholder || "";
+    input.addEventListener("change", () => { provider[key] = input.value; saveAiStore(); });
+    row.appendChild(input);
+    host.appendChild(row);
+    return input;
+  };
+
+  textRow("名称", "name", provider.name, "给这个服务商起个名字");
+  textRow("接口地址", "baseUrl", provider.baseUrl, "https://api.example.com/v1（结尾不带 /chat/completions）");
+
+  const secretRow = el("div", "yx-set-row");
+  secretRow.appendChild(el("span", "yx-set-lab", "API Key"));
+  const secret = el("input", "yx-set-input");
+  secret.type = "password";
+  secret.autocomplete = "off";
+  secret.value = provider.apiKey === undefined || provider.apiKey === null ? "" : String(provider.apiKey);
+  secret.placeholder = "sk-…（存在你本机用户目录，不进工作流）";
+  secret.addEventListener("change", () => { provider.apiKey = secret.value; saveAiStore(); });
+  secretRow.appendChild(secret);
+  const eye = el("button", "yx-chip yx-set-eye", "显示");
+  eye.type = "button";
+  eye.addEventListener("click", () => {
+    const shown = String(secret.type || "password") === "text";
+    secret.type = shown ? "password" : "text";
+    eye.textContent = shown ? "显示" : "隐藏";
+  });
+  secretRow.appendChild(eye);
+  host.appendChild(secretRow);
+
+  // 模型：下拉选择（拉取到的模型都在里面）+ 手动输入兜底
+  const modelRow = el("div", "yx-set-row");
+  modelRow.appendChild(el("span", "yx-set-lab", "模型"));
+  if (!Array.isArray(provider.models)) provider.models = [];
+  const modelSel = el("select", "yx-set-input yx-set-select");
+  const optIds = [];
+  const pushOpt = (id) => { const n = String(id || "").trim(); if (n && optIds.indexOf(n) < 0) optIds.push(n); };
+  pushOpt(provider.model);
+  provider.models.forEach(pushOpt);
+  for (const id of optIds) {
+    const opt = el("option", "");
+    opt.value = id;
+    opt.textContent = id;
+    modelSel.appendChild(opt);
+  }
+  const manualOpt = el("option", "");
+  manualOpt.value = "__manual__";
+  manualOpt.textContent = "手动输入模型名…";
+  modelSel.appendChild(manualOpt);
+  modelSel.value = provider.model && optIds.indexOf(String(provider.model)) >= 0 ? String(provider.model) : "__manual__";
+  modelSel.title = "点「拉取模型」读接口支持的模型；也可以选最后一项手动输入";
+  modelSel.addEventListener("change", () => {
+    if (modelSel.value === "__manual__") { provider.model = ""; saveAiStore(); renderAiSettingsInto(host); return; }
+    provider.model = modelSel.value;
+    saveAiStore();
+    renderAiSettingsInto(host);
+  });
+  modelRow.appendChild(modelSel);
+  const pullBtn = el("button", "yx-chip", "拉取模型");
+  pullBtn.type = "button";
+  pullBtn.title = "用上面这个接口地址和 Key 去读 /models，把可用模型填进左侧下拉框";
+  modelRow.appendChild(pullBtn);
+  host.appendChild(modelRow);
+  if (!provider.model) {
+    const mRow = el("div", "yx-set-row");
+    mRow.appendChild(el("span", "yx-set-lab", "模型名"));
+    const mInp = el("input", "yx-set-input");
+    mInp.value = "";
+    mInp.placeholder = "如 deepseek-chat / gpt-4o-mini";
+    mInp.addEventListener("change", () => { provider.model = String(mInp.value || "").trim(); saveAiStore(); renderAiSettingsInto(host); });
+    mRow.appendChild(mInp);
+    host.appendChild(mRow);
+  }
+  const modelNote = el("div", "yx-set-note", "");
+  host.appendChild(modelNote);
+  const setNote = (text, bad) => {
+    modelNote.textContent = text;
+    modelNote.className = "yx-set-note" + (bad ? " yx-bad" : "");
+  };
+  pullBtn.addEventListener("click", async () => {
+    pullBtn.disabled = true;
+    setNote("正在读取模型列表…", false);
+    try {
+      const res = await chatPost("/moss_yxbox/models", {
+        baseUrl: String(provider.baseUrl || ""),
+        apiKey: String(provider.apiKey || ""),
+        timeoutSec: Number(provider.timeoutSec) || 30,
+        proxy: String(provider.proxy || ""),
+      });
+      const list = res && Array.isArray(res.models) ? res.models : [];
+      if (!list.length) { setNote("接口没返回模型列表（有的服务商不提供 /models，可以直接手动输入模型名）", true); return; }
+      provider.models = list.slice(0, 500);
+      if (!provider.model) provider.model = provider.models[0];
+      saveAiStore();
+      setNote("已读取 " + list.length + " 个模型，下拉框里选", false);
+      renderAiSettingsInto(host);
+    } catch (error) {
+      setNote("拉取失败：" + String((error && error.message) || error).slice(0, 120), true);
+    } finally {
+      pullBtn.disabled = false;
+    }
+  });
+
+
+  // 全局参数：温度 / 最大 token / 上下文轮数 / 超时 / 代理
+  const nums = el("div", "yx-set-row yx-set-row-params");
+  nums.appendChild(el("span", "yx-set-lab", "参数"));
+  const temp = el("input", "yx-set-input");
+  temp.type = "number";
+  temp.step = "0.1";
+  temp.min = "0";
+  temp.max = "2";
+  temp.value = String(aiStore.temperature);
+  temp.title = "温度：越大越发散（全局默认值，单个模型可在下面「高级参数」里覆盖）";
+  temp.addEventListener("change", () => {
+    aiStore.temperature = Math.max(0, Math.min(2, Number(temp.value) || 0.8));
+    temp.value = String(aiStore.temperature);
+    saveAiStore();
+  });
+  nums.appendChild(temp);
+  const mt = el("input", "yx-set-input");
+  mt.type = "number";
+  mt.step = "64";
+  mt.min = "16";
+  mt.max = "65536";
+  mt.value = String(aiStore.maxTokens);
+  mt.title = "每次回答最多多少 token";
+  mt.addEventListener("change", () => {
+    aiStore.maxTokens = Math.max(16, Math.min(65536, Math.round(Number(mt.value) || 1024)));
+    mt.value = String(aiStore.maxTokens);
+    saveAiStore();
+  });
+  nums.appendChild(mt);
+  const rounds = el("input", "yx-set-input");
+  rounds.type = "number";
+  rounds.step = "1";
+  rounds.min = "0";
+  rounds.max = "40";
+  rounds.value = String(aiStore.contextRounds);
+  rounds.title = "上下文轮数：设为 3 就把最近 3 轮对话（你问 + AI 答）一起发给 AI；0＝只发这一句";
+  rounds.addEventListener("change", () => {
+    aiStore.contextRounds = Math.max(0, Math.min(40, Math.round(Number(rounds.value) || 3)));
+    rounds.value = String(aiStore.contextRounds);
+    saveAiStore();
+    if (chatState.dom) renderChat();
+  });
+  nums.appendChild(rounds);
+  const tout = el("input", "yx-set-input");
+  tout.type = "number";
+  tout.step = "10";
+  tout.min = "10";
+  tout.max = "1800";
+  tout.value = String(provider.timeoutSec || 300);
+  tout.title = "超时（秒）：等回复的最长时间";
+  tout.placeholder = "超时秒";
+  tout.addEventListener("change", () => {
+    provider.timeoutSec = Math.max(10, Math.min(1800, Math.round(Number(tout.value) || 300)));
+    tout.value = String(provider.timeoutSec);
+    saveAiStore();
+  });
+  nums.appendChild(tout);
+  host.appendChild(nums);
+  const proxyRow = el("div", "yx-set-row");
+  proxyRow.appendChild(el("span", "yx-set-lab", "代理"));
+  const proxyInp = el("input", "yx-set-input");
+  proxyInp.value = String(provider.proxy || "");
+  proxyInp.placeholder = "留空＝直连；走本地代理填 http://127.0.0.1:7897";
+  proxyInp.addEventListener("change", () => { provider.proxy = String(proxyInp.value || "").trim(); saveAiStore(); });
+  proxyRow.appendChild(proxyInp);
+  host.appendChild(proxyRow);
+
+  // 单个模型的高级参数（照提示词小助手的 API 管理器：每个模型可单独设，带启用开关）
+  if (!provider.adv || typeof provider.adv !== "object") provider.adv = {};
+  const modelKey = String(provider.model || "");
+  if (modelKey && !provider.adv[modelKey]) {
+    provider.adv[modelKey] = { on: false, temperature: aiStore.temperature, maxTokens: aiStore.maxTokens, topP: 1, penalty: 0 };
+  }
+  const adv = modelKey ? provider.adv[modelKey] : null;
+  if (adv) {
+    const advRow = el("div", "yx-set-row");
+    const advWrap = el("label", "yx-tag-pv");
+    const advBox = el("input", "");
+    advBox.type = "checkbox";
+    advBox.checked = adv.on === true;
+    advWrap.appendChild(advBox);
+    advWrap.appendChild(el("span", "", "启用高级参数（只对当前模型「" + modelKey + "」生效）"));
+    advBox.addEventListener("change", () => {
+      adv.on = !!advBox.checked;
+      saveAiStore();
+      renderAiSettingsInto(host);
+    });
+    advRow.appendChild(advWrap);
+    host.appendChild(advRow);
+    if (adv.on) {
+      const advRow2 = el("div", "yx-set-row");
+      advRow2.appendChild(el("span", "yx-set-lab", "覆盖"));
+      const aT = el("input", "yx-set-input");
+      aT.type = "number"; aT.step = "0.1"; aT.min = "0"; aT.max = "2";
+      aT.value = String(adv.temperature);
+      aT.title = "这个模型的温度";
+      aT.addEventListener("change", () => { adv.temperature = Math.max(0, Math.min(2, Number(aT.value) || 0.8)); aT.value = String(adv.temperature); saveAiStore(); });
+      advRow2.appendChild(aT);
+      const aM = el("input", "yx-set-input");
+      aM.type = "number"; aM.step = "64"; aM.min = "16"; aM.max = "65536";
+      aM.value = String(adv.maxTokens);
+      aM.title = "这个模型的最大 token";
+      aM.addEventListener("change", () => { adv.maxTokens = Math.max(16, Math.min(65536, Math.round(Number(aM.value) || 1024))); aM.value = String(adv.maxTokens); saveAiStore(); });
+      advRow2.appendChild(aM);
+      const aP = el("input", "yx-set-input");
+      aP.type = "number"; aP.step = "0.05"; aP.min = "0"; aP.max = "1";
+      aP.value = String(adv.topP);
+      aP.title = "top_p（核采样）：1＝不限制";
+      aP.addEventListener("change", () => { adv.topP = Math.max(0, Math.min(1, Number(aP.value) || 1)); aP.value = String(adv.topP); saveAiStore(); });
+      advRow2.appendChild(aP);
+      const aN = el("input", "yx-set-input");
+      aN.type = "number"; aN.step = "0.1"; aN.min = "-2"; aN.max = "2";
+      aN.value = String(adv.penalty);
+      aN.title = "frequency_penalty：越大越不爱重复";
+      aN.addEventListener("change", () => { adv.penalty = Math.max(-2, Math.min(2, Number(aN.value) || 0)); aN.value = String(adv.penalty); saveAiStore(); });
+      advRow2.appendChild(aN);
+      host.appendChild(advRow2);
+      const advNote = el("div", "yx-set-note", "顺序：温度 · 最大 token · top_p · 频率惩罚；关掉开关就用上面的全局参数。");
+      host.appendChild(advNote);
+    }
+  } else {
+    host.appendChild(el("div", "yx-set-note", "先选一个模型，才能给它单独设高级参数。"));
+  }
+
+
+  // 操作：测试连接 / 删除当前
+  const acts = el("div", "yx-set-row");
+  const testBtn = el("button", "yx-chip", "测试连接");
+  testBtn.type = "button";
+  testBtn.title = "用当前服务商发一句「你好」，能收到回复就算通";
+  const testOut = el("span", "yx-set-note", "");
+  testBtn.addEventListener("click", async () => {
+    testBtn.disabled = true;
+    testOut.textContent = "测试中…";
+    try {
+      const res = await chatPost("/moss_yxbox/chat", {
+        provider: {
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKey,
+          model: provider.model,
+          temperature: 0,
+          maxTokens: 32,
+          timeoutSec: Number(provider.timeoutSec) || 120,
+          proxy: String(provider.proxy || ""),
+        },
+        messages: [{ role: "user", content: "你好，请只回一句「连接正常」。" }],
+        stream: false,
+      });
+      const text = res && res.data && res.data.choices && res.data.choices[0]
+        && res.data.choices[0].message && res.data.choices[0].message.content;
+      testOut.textContent = text ? "连接正常：" + String(text).slice(0, 40) : "接口回了数据，但没拿到文本（可能模型名不对）";
+    } catch (error) {
+      testOut.textContent = "连接失败：" + String((error && error.message) || error).slice(0, 120);
+    } finally {
+      testBtn.disabled = false;
+    }
+  });
+  acts.appendChild(testBtn);
+  acts.appendChild(testOut);
+  host.appendChild(acts);
+
+  const acts2 = el("div", "yx-set-row");
+  const delBtn = el("button", "yx-chip yx-soft-danger", "删除当前服务商");
+  delBtn.type = "button";
+  delBtn.addEventListener("click", () => {
+    if (providers.length <= 1) { showToast("至少保留一个服务商"); return; }
+    providers.splice(active, 1);
+    aiStore.active = 0;
+    saveAiStore();
+    renderAiSettingsInto(host);
+  });
+  acts2.appendChild(delBtn);
+  host.appendChild(acts2);
+
+  host.appendChild(el("div", "yx-set-note",
+    "接口按 OpenAI 兼容格式调用（接口地址 + /chat/completions），支持流式输出与图片（vision）输入；"
+    + "密钥只存在你本机的用户目录，不进工作流、不进 PNG、不上传第三方，更新插件不会丢。"));
+};
+
+const renderStorageSettings = (host) => {
+  host.textContent = "";
+  host.appendChild(el("div", "yx-set-lab", "存档目录"));
+  const pathBox = el("div", "yx-set-note", String(state.storeDir || storeDirPath || "读取中…"));
+  host.appendChild(pathBox);
+  const copyRow = el("div", "yx-set-row");
+  const copyBtn = el("button", "yx-chip", "复制路径");
+  copyBtn.type = "button";
+  copyBtn.addEventListener("click", () => {
+    const text = String(state.storeDir || storeDirPath || "");
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        Promise.resolve(navigator.clipboard.writeText(text)).then(() => showToast("路径已复制")).catch(() => showToast(text));
+      } else showToast(text);
+    } catch (error) { showToast(text); }
+  });
+  copyRow.appendChild(copyBtn);
+  const reloadBtn = el("button", "yx-chip", "重新读取");
+  reloadBtn.type = "button";
+  reloadBtn.addEventListener("click", () => {
+    storeCache.presets = null;
+    Promise.resolve(serverStoreGet("presets")).then(() => {
+      pathBox.textContent = String(state.storeDir || storeDirPath || "（没读到）");
+      showToast("已重新读取存档目录");
+    }).catch(() => showToast("读取失败，看控制台"));
+  });
+  copyRow.appendChild(reloadBtn);
+  host.appendChild(copyRow);
+
+  host.appendChild(el("div", "yx-set-sep", ""));
+  host.appendChild(el("div", "yx-set-lab", "自定义存档路径（留空＝默认 user/default/moss_yxbox）"));
+  const dirRow = el("div", "yx-set-row");
+  const dirInput = el("input", "yx-set-input");
+  dirInput.placeholder = "如 D:/moss_yxbox_data（必须是能写的目录）";
+  Promise.resolve(serverStoreGet("config")).then((cfg) => {
+    if (cfg && typeof cfg === "object" && cfg.dir) dirInput.value = String(cfg.dir);
+  }).catch(() => {});
+  dirInput.addEventListener("keydown", (event) => { if (event.key === "Enter") event.preventDefault(); });
+  dirRow.appendChild(dirInput);
+  const saveDir = el("button", "yx-chip", "保存路径");
+  saveDir.type = "button";
+  saveDir.addEventListener("click", () => {
+    const dir = String(dirInput.value || "").trim();
+    Promise.resolve(serverStorePut("config", { dir }))
+      .then(() => {
+        storeCache.presets = null;
+        return serverStoreGet("presets");
+      })
+      .then(() => {
+        pathBox.textContent = String(state.storeDir || storeDirPath || "（没读到）");
+        showToast(dir ? "存档路径已改为：" + dir : "已改回默认存档路径");
+      })
+      .catch((error) => showToast("保存失败：" + String((error && error.message) || error).slice(0, 90)));
+  });
+  dirRow.appendChild(saveDir);
+  const resetDir = el("button", "yx-chip", "恢复默认");
+  resetDir.type = "button";
+  resetDir.addEventListener("click", () => { dirInput.value = ""; saveDir.click(); });
+  dirRow.appendChild(resetDir);
+  host.appendChild(dirRow);
+  host.appendChild(el("div", "yx-set-note",
+    "改路径后，新的存档会写到新目录；旧目录里的文件不会自动搬过去（想搬就先把旧目录文件拷过去再改）。"));
+
+  host.appendChild(el("div", "yx-set-sep", ""));
+  host.appendChild(el("div", "yx-set-lab", "备份 / 恢复"));
+  const ioRow = el("div", "yx-set-row");
+  const names = ["presets", "editor", "tags_custom", "ai", "preview_index", "config"];
+  const exportBtn = el("button", "yx-chip", "导出全部存档");
+  exportBtn.type = "button";
+  exportBtn.title = "把预设、编辑库偏好、自定义 tag、AI 配置、预览图索引、存档设置打包成一个 JSON 下载";
+  exportBtn.addEventListener("click", async () => {
+    try {
+      const pack = { v: 1, at: new Date().toISOString(), items: {} };
+      for (const name of names) {
+        const data = await storeCacheGet(name);
+        if (data !== null && data !== undefined) pack.items[name] = data;
+      }
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = el("a", "");
+      link.href = url;
+      link.download = "moss_yxbox_backup_" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".json";
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { try { URL.revokeObjectURL(url); link.remove(); } catch (_e) { /* 忽略 */ } }, 2000);
+      showToast("已导出 " + Object.keys(pack.items).length + " 份存档");
+    } catch (error) {
+      showToast("导出失败：" + String((error && error.message) || error).slice(0, 100));
+    }
+  });
+  ioRow.appendChild(exportBtn);
+  const importBtn = el("button", "yx-chip", "导入备份");
+  importBtn.type = "button";
+  importBtn.addEventListener("click", () => {
+    const inp = el("input", "");
+    inp.type = "file";
+    inp.accept = ".json,application/json";
+    inp.style.display = "none";
+    inp.addEventListener("change", async () => {
+      const file = inp.files && inp.files[0];
+      if (!file) return;
+      try {
+        const text = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.readAsText(file);
+        });
+        const pack = JSON.parse(text);
+        const items = pack && pack.items ? pack.items : null;
+        if (!items) throw new Error("不是本插件导出的备份文件");
+        let count = 0;
+        for (const name of names) {
+          if (!(name in items)) continue;
+          await serverStorePut(name, items[name]);
+          count += 1;
+        }
+        storeCache.presets = null;
+        pathBox.textContent = String(state.storeDir || storeDirPath || "（没读到）");
+        if (tagLibOver.loaded) { tagLibOver.loaded = false; loadMine(); }
+        showToast("已导入 " + count + " 份存档（重开编辑库 / 刷新页面后生效）");
+      } catch (error) {
+        showToast("导入失败：" + String((error && error.message) || error).slice(0, 100));
+      } finally {
+        inp.remove();
+      }
+    });
+    document.body.appendChild(inp);
+    inp.click();
+  });
+  ioRow.appendChild(importBtn);
+  host.appendChild(ioRow);
+  host.appendChild(el("div", "yx-set-note",
+    "备份文件里可能含 API Key，别分享给别人。换电脑时用它把预设、自定义 tag、AI 配置一起带过去。"));
+};
+
+const renderEditorSettings = () => {
+  const dom = setState.dom;
+  if (!dom) return;
+  dom.tabCommon.classList.toggle("yx-set-tab-on", setState.tab === "common");
+  dom.tabAi.classList.toggle("yx-set-tab-on", setState.tab === "ai");
+  dom.tabData.classList.toggle("yx-set-tab-on", setState.tab === "data");
+  dom.body.textContent = "";
+  if (setState.tab === "common") {
+    const mkCheck = (label, checked, onChange) => {
+      const row = el("label", "yx-set-row");
+      const box = el("input", "");
+      box.type = "checkbox";
+      box.checked = !!checked;
+      box.addEventListener("change", onChange);
+      row.appendChild(box);
+      row.appendChild(el("span", "", label));
+      dom.body.appendChild(row);
+      return box;
+    };
+    mkCheck("悬停说明（指向按钮/标签时显示用法）", editorState.tipOn, (event) => {
+      editorState.tipOn = !!event.target.checked;
+      saveEditorPrefs();
+    });
+    mkCheck("在 Tag 列表里显示预览图（只显示你导入过的）", previewStore.on, (event) => {
+      previewStore.on = !!event.target.checked;
+      savePreviewStore();
+      renderTagLib();
+    });
+    const row = el("div", "yx-set-row");
+    const reset = el("button", "yx-chip", "重置窗口位置");
+    reset.type = "button";
+    reset.addEventListener("click", () => {
+      editorCenterPos();
+      applyEditorPos();
+      saveEditorPrefs();
+      showToast("窗口位置已重置");
+    });
+    row.appendChild(reset);
+    row.appendChild(el("span", "yx-set-note", "拖动窗口顶部的标题栏可以移动；双击标题栏也能重置。"));
+    dom.body.appendChild(row);
+    dom.body.appendChild(el("div", "yx-set-sep", ""));
+    dom.body.appendChild(el("div", "yx-set-note",
+      "对象列表里勾选要编辑的框；描述/文字的修改会实时显示在画布上，但只有点「应用并关闭」才写进节点，直接关掉不保存。"));
+  } else if (setState.tab === "ai") {
+    const host = el("div", "");
+    dom.body.appendChild(host);
+    renderAiSettingsInto(host);
+  } else {
+    const host = el("div", "");
+    dom.body.appendChild(host);
+    renderStorageSettings(host);
+  }
+};
+
+const openEditorSettings = () => {
+  if (setState.dom) {
+    setState.dom.overlay.style.display = "flex";
+    renderEditorSettings();
+    return;
+  }
+  ensureEditorStyle();
+  const overlay = el("div", "yx-modal yx-set-modal");
+  overlay.style.display = "none";
+  const box = el("div", "yx-set-box");
+  overlay.appendChild(box);
+  const head = el("div", "yx-set-head");
+  head.appendChild(el("div", "yx-set-title", "编辑库设置"));
+  head.appendChild(el("div", "yx-set-grow", ""));
+  const x = el("button", "yx-chip", "×");
+  x.type = "button";
+  x.addEventListener("click", () => { overlay.style.display = "none"; });
+  head.appendChild(x);
+  box.appendChild(head);
+  const tabs = el("div", "yx-set-tabs");
+  const tabCommon = el("button", "yx-set-tab", "通用");
+  const tabAi = el("button", "yx-set-tab", "AI 接口");
+  const tabData = el("button", "yx-set-tab", "数据与存档");
+  for (const pair of [[tabCommon, "common"], [tabAi, "ai"], [tabData, "data"]]) {
+    pair[0].type = "button";
+    pair[0].addEventListener("click", () => { setState.tab = pair[1]; renderEditorSettings(); });
+    tabs.appendChild(pair[0]);
+  }
+  box.appendChild(tabs);
+  const body = el("div", "yx-set-body");
+  box.appendChild(body);
+  overlay.addEventListener("pointerdown", (event) => {
+    if (event.target === overlay) overlay.style.display = "none";
+  });
+  document.body.appendChild(overlay);
+  setState.dom = { overlay, box, body, tabCommon, tabAi, tabData };
+  overlay.style.display = "flex";
+  renderEditorSettings();
+};
+
+// ── 编辑库内的撤销 / 重做 + Tag 库备份与恢复 ────────────────────────────────
+const editorEditSnapshot = () => {
+  const boxes = editorBoxes().map((box) => ({ id: boxKey(box), desc: String(box.desc || ""), text: String(box.text || "") }));
+  let tags = "{}";
+  try { tags = JSON.stringify(tagOverPayload()); } catch (error) { tags = "{}"; }
+  return { boxes, tags };
+};
+
+const editorApplySnapshot = (snap) => {
+  if (!snap) return;
+  const byId = new Map(editorBoxes().map((box) => [boxKey(box), box]));
+  for (const item of snap.boxes || []) {
+    const box = byId.get(item.id);
+    if (!box) continue;
+    box.desc = item.desc;
+    box.text = item.text;
+  }
+  try {
+    const data = JSON.parse(snap.tags || "{}");
+    tagOver.mine = Array.isArray(data.mine) ? data.mine : tagOver.mine;
+    tagOver.libs = Array.isArray(data.libs) ? data.libs : tagOver.libs;
+    tagOver.rename = data.rename && typeof data.rename === "object" ? data.rename : {};
+    tagOver.removed = data.removed && typeof data.removed === "object" ? data.removed : {};
+    tagOver.moved = data.moved && typeof data.moved === "object" ? data.moved : {};
+    tagOver.added = data.added && typeof data.added === "object" ? data.added : {};
+  } catch (error) { /* 忽略 */ }
+  editorState.restoring = true;
+  try { tagLibSel.clear(); } catch (error) { /* 忽略 */ }
+  saveTagOver();
+  renderTagLib();
+  editorLoadActive();
+  editorSchedulePreview();
+  editorState.restoring = false;
+};
+
+const editorPushUndo = () => {
+  if (!editorState.open) return;
+  editorState.undo.push(editorEditSnapshot());
+  if (editorState.undo.length > 60) editorState.undo.shift();
+  editorState.redo.length = 0;
+  editorState.lastUndoAt = Date.now();
+};
+
+const editorUndo = () => {
+  if (!editorState.open) return;
+  if (!editorState.undo.length) {
+    showToast("没有可以撤销的编辑库操作");
+    return;
+  }
+  const current = editorEditSnapshot();
+  const prev = editorState.undo.pop();
+  editorState.redo.push(current);
+  editorApplySnapshot(prev);
+  showToast("已撤销（编辑库内）");
+};
+
+const editorRedo = () => {
+  if (!editorState.open) return;
+  if (!editorState.redo.length) {
+    showToast("没有可以重做的编辑库操作");
+    return;
+  }
+  const current = editorEditSnapshot();
+  const next = editorState.redo.pop();
+  editorState.undo.push(current);
+  editorApplySnapshot(next);
+  showToast("已重做（编辑库内）");
+};
+
+// ── 备份与恢复（只针对 Tag 库数据：我的标签 / 自定义库 / 改名移动删除记录）──
+const tagBackupState = { dir: "", dirInput: null, listEl: null, files: [], includePreviews: false };
+
+const bkConfigDir = () => {
+  const prefs = state.editorPrefs || {};
+  return String(prefs.bkDir || tagBackupState.dir || "").trim();
+};
+
+const defaultBackupDir = () => "D:/YXbox Tags Backup";
+
+const bkPost = async (url, body, method) => {
+  const api = globalThis.api;
+  const init = { method: method || "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) };
+  const res = api && typeof api.fetchApi === "function" ? await api.fetchApi(url, init) : await fetch(url, init);
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.ok === false) {
+    const detail = (data && (data.error || data.message)) || "HTTP " + res.status;
+    throw new Error(detail);
+  }
+  return data;
+};
+
+const bkUrl = (path, params) => {
+  const query = Object.keys(params || {}).map((key) => encodeURIComponent(key) + "=" + encodeURIComponent(params[key])).join("&");
+  return "/moss_yxbox/" + path + (query ? "?" + query : "");
+};
+
+const bkPreviewNames = () => Object.keys(previewStore.map || {}).map((tag) => String(previewStore.map[tag] || "")).filter(Boolean);
+const bkFetchPreviewData = async (name) => {
+  const url = "/moss_yxbox/preview/" + encodeURIComponent(name) + "?t=" + Date.now();
+  try {
+    const res = (globalThis.api && typeof globalThis.api.fetchApi === "function")
+      ? await globalThis.api.fetchApi(url, { cache: "no-store" })
+      : await fetch(url, { cache: "no-store" });
+    if (!res || !res.ok) return "";
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(blob);
+      } catch (error) {
+        resolve("");
+      }
+    });
+  } catch (error) {
+    return "";
+  }
+};
+const bkPutPreviewData = async (name, dataUrl) => {
+  const body = JSON.stringify({ data: String(dataUrl || "") });
+  const res = (globalThis.api && typeof globalThis.api.fetchApi === "function")
+    ? await globalThis.api.fetchApi("/moss_yxbox/preview/" + encodeURIComponent(name), { method: "POST", headers: { "Content-Type": "application/json" }, body })
+    : await fetch("/moss_yxbox/preview/" + encodeURIComponent(name), { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  return !!res;
+};
+// 整库快照：Tag 库的全部改动（库/分类/标签/收藏/改名/移动/删除）+ 预览图（dataURL 一起存）
+const bkMakeSnapshot = (withPreviews) => {
+  const snap = {
+    v: 6,
+    at: new Date().toISOString(),
+    tagOver: tagOverPayload(),
+    preview: { on: !!previewStore.on, map: Object.assign({}, previewStore.map || {}) },
+    previewFiles: null,
+  };
+  // 预览图默认不进备份（一张 256px WebP 也有几十 KB，几千张就是几百 MB）；
+  // 勾了「包含预览图」也只是写一份清单，图片由后端直接从 previews/ 拷进备份目录，不经过 HTTP body。
+  if (withPreviews) {
+    const files = bkPreviewNames().filter((name, index, arr) => arr.indexOf(name) === index);
+    if (files.length) snap.previewFiles = { folder: "previews", files };
+  }
+  return snap;
+};
+
+
+const renderBkList = () => {
+  const dom = tagBackupState;
+  if (!dom.listEl) return;
+  dom.listEl.textContent = "";
+  if (!dom.files.length) {
+    dom.listEl.appendChild(el("div", "yx-tag-note", "这个目录里还没有备份文件"));
+    return;
+  }
+  for (const item of dom.files) {
+    const line = el("div", "yx-bk-item");
+    line.appendChild(el("span", "", item.name));
+    line.appendChild(el("span", "yx-tag-note", Math.round(Number(item.size || 0) / 1024) + " KB"));
+    line.appendChild(el("span", "yx-tag-lv3space"));
+    const use = el("button", "yx-chip", "恢复");
+    use.type = "button";
+    use.addEventListener("click", () => bkRestore(item.name));
+    const del = el("button", "yx-chip", "删除");
+    del.type = "button";
+    del.addEventListener("click", () => bkDelete(item.name));
+    line.appendChild(use);
+    line.appendChild(del);
+    dom.listEl.appendChild(line);
+  }
+};
+
+const bkSave = async () => {
+  let dir = String(tagBackupState.dirInput ? tagBackupState.dirInput.value : "").trim();
+  if (!dir) {
+    dir = defaultBackupDir();
+    if (tagBackupState.dirInput) tagBackupState.dirInput.value = dir;
+  }
+  try {
+    const name = "moss_yxbox_tags_" + new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14) + ".json";
+    const include = !!tagBackupState.includePreviews;
+    const snap = await bkMakeSnapshot(include);
+    if (snap.previewFiles) snap.previewFiles.folder = name + ".previews";
+    const res = await bkPost(bkUrl("backup"), { dir, name, data: snap });
+    let copied = 0;
+    if (snap.previewFiles) {
+      try {
+        const cp = await bkPost(bkUrl("backup/previews"), { dir, name, names: snap.previewFiles.files });
+        copied = Number(cp && cp.count) || 0;
+      } catch (error) {
+        showToast("备份已存下，但预览图拷贝失败：" + (error && error.message ? error.message : String(error)));
+      }
+    }
+    tagBackupState.dir = dir;
+    if (!state.editorPrefs) state.editorPrefs = {};
+    state.editorPrefs.bkDir = dir;
+    saveEditorPrefs();
+    showToast(include ? "已备份到：" + res.path + "（预览图 " + copied + " 张）" : "已备份到：" + res.path);
+    await bkRefreshList();
+  } catch (error) {
+    const msg = error && error.message ? error.message : String(error);
+    try {
+      const fname = "moss_yxbox_tags_" + new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14) + ".json";
+      const blob = new Blob([JSON.stringify(snap, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = el("a");
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e2) { /* 忽略 */ } }, 4000);
+      showToast("写盘失败（" + msg + "），已改为下载到浏览器下载目录：" + fname);
+    } catch (e2) {
+      showToast("备份失败：" + msg);
+    }
+  }
+};
+
+const bkRefreshList = async () => {
+  const dir = String(tagBackupState.dirInput ? tagBackupState.dirInput.value : "").trim();
+  if (!dir) return;
+  try {
+    const res = await bkPost(bkUrl("backup", { dir }), undefined, "GET");
+    tagBackupState.dir = dir;
+    tagBackupState.files = Array.isArray(res.files) ? res.files : [];
+    renderBkList();
+  } catch (error) {
+    tagBackupState.files = [];
+    renderBkList();
+    showToast("读取备份目录失败：" + (error && error.message ? error.message : String(error)));
+  }
+};
+
+const bkApplyPayload = async (data, opts) => {
+  if (!data || typeof data !== "object") {
+    showToast("这个文件不是插件的 Tag 库备份");
+    return;
+  }
+  // v5 起备份是整库包裹（{v,tagOver,preview,images}）；v4 及更早是扁平的 tagOver。
+  const wrap = data.tagOver && typeof data.tagOver === "object" ? data.tagOver : data;
+  editorPushUndo();
+  tagOver.mine = Array.isArray(wrap.mine) ? wrap.mine : [];
+  tagOver.fav = Array.isArray(wrap.fav) ? wrap.fav : [];
+  tagOver.libs = Array.isArray(wrap.libs) ? wrap.libs.map(libMigrate).filter(Boolean) : [];
+  tagOver.rename = wrap.rename && typeof wrap.rename === "object" ? wrap.rename : (wrap.renamed && typeof wrap.renamed === "object" ? wrap.renamed : {});
+  tagOver.removed = wrap.removed && typeof wrap.removed === "object" ? wrap.removed : {};
+  tagOver.moved = wrap.moved && typeof wrap.moved === "object" ? wrap.moved : {};
+  tagOver.added = wrap.added && typeof wrap.added === "object" ? wrap.added : {};
+  saveTagOver();
+
+  const images = data.images && typeof data.images === "object" ? data.images : null;
+  const preview = data.preview && typeof data.preview === "object" ? data.preview : null;
+  const files = data.previewFiles && Array.isArray(data.previewFiles.files) ? data.previewFiles.files : null;
+  let restored = 0;
+  if (files && files.length) {
+    const baseDir = String((opts && opts.dir) || tagBackupState.dir || (tagBackupState.dirInput ? tagBackupState.dirInput.value : "") || "").trim().replace(/[\\/]+$/, "");
+    const folder = String(data.previewFiles.folder || "").trim();
+    if (baseDir && folder) {
+      try {
+        const res = await bkPost(bkUrl("preview/restore"), { dir: baseDir + "/" + folder, names: files });
+        restored = Number(res && res.count) || 0;
+      } catch (error) {
+        showToast("恢复预览图失败：" + (error && error.message ? error.message : String(error)) + "（预览图目录可能没跟备份一起拷过来）");
+      }
+    }
+  }
+  if (images) {
+    for (const name of Object.keys(images)) {
+      const dataUrl = String(images[name] || "");
+      if (!/^data:image\//i.test(dataUrl)) continue;
+      try {
+        if (await bkPutPreviewData(name, dataUrl)) restored += 1;
+      } catch (error) { /* 单张失败不影响其它 */ }
+    }
+  }
+  if (preview) {
+    previewStore.map = preview.map && typeof preview.map === "object" ? preview.map : {};
+    previewStore.on = !!preview.on;
+    previewStore.stamp = Date.now();
+    serverStorePut("preview_index", { v: 1, on: !!previewStore.on, tags: previewStore.map }).catch(() => {});
+  }
+
+  renderTagLib();
+  showToast(restored ? "已从备份恢复（预览图 " + restored + " 张）" : "已从备份恢复");
+};
+
+const bkRestore = async (name) => {
+  const dir = String(tagBackupState.dirInput ? tagBackupState.dirInput.value : "").trim();
+  try {
+    // 恢复前先把手上的状态存一份，万一后悔还能退回来
+    try {
+      const before = "before_restore_" + new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14) + ".json";
+      await bkPost(bkUrl("backup"), { dir, name: before, data: await bkMakeSnapshot() });
+    } catch (error) { /* 存不下也不挡恢复 */ }
+    const res = await bkPost(bkUrl("backup/file", { dir, name }), undefined, "GET");
+    await bkApplyPayload(JSON.parse(String(res.data || "{}")), { dir });
+    await bkRefreshList();
+  } catch (error) {
+    const msg = error && error.message ? error.message : String(error);
+    const hint = /404|not found|未找到/i.test(msg) ? "（后端接口没生效的话，请重启一次 ComfyUI）" : "";
+    showToast("恢复失败：" + msg + hint);
+  }
+};
+
+const bkDelete = async (name) => {
+  const dir = String(tagBackupState.dirInput ? tagBackupState.dirInput.value : "").trim();
+  try {
+    await bkPost(bkUrl("backup/file", { dir, name }), undefined, "DELETE");
+    showToast("已删除备份：" + name);
+    await bkRefreshList();
+  } catch (error) {
+    showToast("删除失败：" + (error && error.message ? error.message : String(error)));
+  }
+};
+
+const bkImportDb = async (file, target) => {
+  if (!file) return;
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    const res = await bkPost("taglib/import", { name: file.name || "tags.db", data: btoa(binary) });
+    const groups = Array.isArray(res.groups) ? res.groups : [];
+    if (!groups.length) {
+      showToast("这个文件里没有读到标签分类");
+      return;
+    }
+    editorPushUndo();
+    if (!Array.isArray(tagOver.libs)) tagOver.libs = [];
+    const baseName = String(file.name || "导入的标签库").replace(/\.[^.]+$/, "").slice(0, 40);
+    const useMine = target === "mine";
+    const lib = { id: "i" + Date.now().toString(36), name: useMine ? "导入-" + baseName : baseName, cats: [] };
+    for (const group of groups) {
+      const cat = { name: String(group.name || "分类"), tags: [] };
+      for (const sub of group.subs || []) {
+        for (const tag of sub.tags || []) {
+          const text = String((tag && tag[0]) || "").trim();
+          if (!text) continue;
+          cat.tags.push({ t: text, cn: String((tag && tag[1]) || "").trim() });
+        }
+      }
+      if (cat.tags.length) lib.cats.push(cat);
+    }
+    if (!lib.cats.length) {
+      showToast("这个文件里没有标签内容");
+      return;
+    }
+    if (useMine) {
+      for (const cat of lib.cats) {
+        for (const tag of cat.tags) tagOver.mine.push({ t: tag.t, cn: tag.cn });
+      }
+      showToast("已导入 " + lib.cats.length + " 个分类、" + res.total + " 个标签到「我的」");
+    } else {
+      tagOver.libs.push(lib);
+      tagLib.lib = "lib:" + lib.id;
+      tagLib.cat = lib.cats[0].name;
+      tagLib.sub = "";
+      showToast("已导入 " + lib.cats.length + " 个分类、" + res.total + " 个标签（页签最右边）");
+    }
+    saveTagOver();
+    renderTagLib();
+  } catch (error) {
+    showToast("导入失败：" + (error && error.message ? error.message : String(error)));
+  }
+};
+
+const bkImportJsonFile = (file) => {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = () => showToast("读取文件失败");
+  reader.onload = () => {
+    try {
+      bkApplyPayload(JSON.parse(String(reader.result || "{}"))).catch(() => {});
+    } catch (error) {
+      showToast("这个文件不是有效的备份 JSON");
+    }
+  };
+  reader.readAsText(file);
+};
+
+const openTagBackup = () => {
+  ensureEditorStyle();
+  const overlay = el("div", "yx-modal yx-bk-modal");
+  overlay.style.zIndex = "100006";
+  const box = el("div", "yx-set-box");
+  const head = el("div", "yx-set-head");
+  head.appendChild(el("div", "yx-set-title", "Tag 库备份"));
+  const closeX = el("button", "yx-chip yx-editor-xbtn", "×");
+  closeX.type = "button";
+  head.appendChild(closeX);
+  box.appendChild(head);
+  const body = el("div", "yx-set-body");
+
+  body.appendChild(el("div", "yx-set-note", "备份只包含 Tag 库：你的标签、自定义库、改名/移动/删除记录；不涉及框对象与画布。"));
+  const dirRow = el("div", "yx-bk-row");
+  dirRow.appendChild(el("span", "yx-set-lab", "备份文件夹"));
+  const dirInput = el("input", "yx-set-input");
+  dirInput.placeholder = "D:/YXbox Tags Backup（留空就用它，会自动创建）";
+  dirInput.value = bkConfigDir() || defaultBackupDir();
+  dirRow.appendChild(dirInput);
+  const saveDir = el("button", "yx-chip", "记住这个目录");
+  saveDir.type = "button";
+  saveDir.addEventListener("click", () => {
+    const dir = String(dirInput.value || "").trim();
+    if (!dir) { showToast("先填目录"); return; }
+    tagBackupState.dir = dir;
+    if (!state.editorPrefs) state.editorPrefs = {};
+    state.editorPrefs.bkDir = dir;
+    saveEditorPrefs();
+    showToast("已记住备份目录");
+    bkRefreshList();
+  });
+  dirRow.appendChild(saveDir);
+  const doBackup = el("button", "yx-chip yx-chip-main", "立即备份");
+  doBackup.type = "button";
+  doBackup.addEventListener("click", bkSave);
+  dirRow.appendChild(doBackup);
+  body.appendChild(dirRow);
+  const pvRow = el("div", "yx-bk-row");
+  const pvLab = el("label", "yx-tag-pv");
+  const pvChk = el("input", "");
+  pvChk.type = "checkbox";
+  pvChk.checked = !!tagBackupState.includePreviews;
+  pvChk.addEventListener("change", () => {
+    tagBackupState.includePreviews = !!pvChk.checked;
+    showToast(pvChk.checked ? "备份会连预览图一起拷到备份文件夹的 .previews 子目录（体积大）" : "备份只存 Tag 库数据，不含预览图");
+  });
+  pvLab.appendChild(pvChk);
+  pvLab.appendChild(el("span", "", "包含预览图（体积大）"));
+  pvLab.title = "勾上以后会把预览图原文件拷到备份旁边的 <备份名>.previews 文件夹；恢复时一起拷回来。不勾则只备份标签库本身，体积小很多。";
+  pvRow.appendChild(pvLab);
+  pvRow.appendChild(el("span", "yx-set-note", "预览图默认不进备份；勾上后按文件夹拷贝，不塞进 JSON。"));
+  body.appendChild(pvRow);
+  const listEl = el("div", "yx-bk-list");
+  body.appendChild(listEl);
+
+  const restoreRow = el("div", "yx-bk-row");
+  const jsonIn = el("input", "");
+  jsonIn.type = "file";
+  jsonIn.accept = ".json";
+  jsonIn.style.display = "none";
+  jsonIn.addEventListener("change", () => {
+    const file = jsonIn.files && jsonIn.files[0];
+    if (file) bkImportJsonFile(file);
+    jsonIn.value = "";
+  });
+  const restoreBtn = el("button", "yx-chip", "从本机文件恢复");
+  restoreBtn.type = "button";
+  restoreBtn.addEventListener("click", () => jsonIn.click());
+  restoreRow.appendChild(restoreBtn);
+  restoreRow.appendChild(jsonIn);
+  body.appendChild(restoreRow);
+
+  box.appendChild(body);
+
+  const foot = el("div", "yx-set-foot");
+  const closeBtn = el("button", "yx-chip", "关闭");
+  closeBtn.type = "button";
+  foot.appendChild(closeBtn);
+  box.appendChild(foot);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  tagBackupState.dirInput = dirInput;
+  tagBackupState.listEl = listEl;
+  tagBackupState.files = [];
+  renderBkList();
+  if (dirInput.value) bkRefreshList();
+
+  const close = () => { try { overlay.remove(); } catch (error) { /* 忽略 */ } };
+  closeX.addEventListener("click", close);
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("pointerdown", (event) => { if (event.target === overlay) close(); });
+};
+
+const buildEditor = () => {
+    if (editorState.dom) return editorState.dom;
+    ensureEditorStyle();
+    const overlay = el("div", "yx-float yx-editor-modal");
+    overlay.style.display = "none";
+    const panel = el("div", "yx-editor");
+    overlay.appendChild(panel);
+
+    const head = el("div", "yx-editor-head");
+    head.appendChild(el("div", "yx-editor-title", "提示词编辑库"));
+    const countEl = el("div", "yx-editor-count", "");
+    head.appendChild(countEl);
+    head.appendChild(el("div", "yx-editor-grow", ""));
+    const tipBtn = el("button", "yx-chip yx-editor-tipbtn", "悬停说明：开");
+    tipBtn.type = "button";
+    tipBtn.title = "打开后把鼠标停在参数/按钮上会显示说明；关掉就不再显示提示气泡";
+    const syncTip = () => {
+      tipBtn.textContent = "悬停说明：" + (editorState.tipOn === false ? "关" : "开");
+      tipBtn.classList.toggle("yx-chip-on", editorState.tipOn !== false);
+    };
+    syncTip();
+    tipBtn.addEventListener("click", () => {
+      editorState.tipOn = editorState.tipOn === false;
+      syncTip();
+      saveEditorPrefs();
+    });
+    head.appendChild(tipBtn);
+    const backupBtn = el("button", "yx-chip yx-editor-bkbtn", "备份与恢复");
+    backupBtn.type = "button";
+    backupBtn.title = "备份 / 恢复 / 导入 Tag 库（只针对 Tag 库，不含框对象）";
+    backupBtn.addEventListener("click", () => openTagBackup());
+    head.appendChild(backupBtn);
+    const closeX = el("button", "yx-chip yx-editor-xbtn", "×");
+    closeX.type = "button";
+    closeX.title = "关闭（不保存未应用的改动）";
+    closeX.addEventListener("click", () => closePromptEditor(false));
+    head.appendChild(closeX);
+    head.style.cursor = "move";
+    let editorDrag = null;
+    let dragMove = null;
+    let dragUp = null;
+    const stopDrag = () => {
+      if (dragMove) globalThis.removeEventListener("pointermove", dragMove, true);
+      if (dragUp) {
+        globalThis.removeEventListener("pointerup", dragUp, true);
+        globalThis.removeEventListener("pointercancel", dragUp, true);
+      }
+      dragMove = null;
+      dragUp = null;
+    };
+    head.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const tag = String((event.target && event.target.tagName) || "").toLowerCase();
+      if (tag === "button" || tag === "input" || tag === "textarea" || tag === "select" || tag === "a") return;
+      const pos = editorState.pos || { x: 0, y: 0 };
+      editorDrag = { x: event.clientX, y: event.clientY, bx: Number(pos.x) || 0, by: Number(pos.y) || 0 };
+      // 移动/抬起挂 window 捕获阶段，鼠标移出标题栏（甚至移出窗口）也能继续拖
+      dragMove = (moveEvent) => {
+        if (!editorDrag) return;
+        editorState.pos = editorClampPos(editorDrag.bx + (moveEvent.clientX - editorDrag.x), editorDrag.by + (moveEvent.clientY - editorDrag.y));
+        applyEditorPos();
+      };
+      dragUp = () => {
+        editorDrag = null;
+        stopDrag();
+        saveEditorPrefs();
+      };
+      globalThis.addEventListener("pointermove", dragMove, true);
+      globalThis.addEventListener("pointerup", dragUp, true);
+      globalThis.addEventListener("pointercancel", dragUp, true);
+      event.preventDefault();
+    });
+    head.addEventListener("dblclick", () => {
+      editorCenterPos();
+      applyEditorPos();
+      saveEditorPrefs();
+    });
+    panel.appendChild(head);
+
+    const body = el("div", "yx-editor-body");
+    const topWrap = el("div", "yx-editor-topwrap");
+    // 左：对象列表（固定，不随 Tag 区滚动）
+    const left = el("div", "yx-editor-col yx-editor-left");
+    left.appendChild(el("div", "yx-editor-colhead", "框对象（勾选＝本次要编辑的）"));
+    const objList = el("div", "yx-editor-objs");
+    left.appendChild(objList);
+    topWrap.appendChild(left);
+
+    // 右：描述 | 文字 同一行
+    const mid = el("div", "yx-editor-fields");
+    const fieldOf = (labelText, key, placeholder) => {
+      const wrap = el("div", "yx-editor-field");
+      const bar = el("div", "yx-editor-fieldbar");
+      bar.appendChild(el("span", "yx-editor-flabel", labelText));
+      const hint = el("span", "yx-editor-fhint", "");
+      bar.appendChild(hint);
+      wrap.appendChild(bar);
+      const area = el("textarea", "yx-editor-area");
+      area.placeholder = placeholder;
+      area.spellcheck = false;
+      area.dataset.yxKey = key;
+      area.addEventListener("focus", () => {
+        if (editorState.dom) editorState.dom.lastKey = key;
+      });
+      area.addEventListener("input", () => editorWriteField(key, area.value));
+      wrap.appendChild(area);
+      return { wrap, area, hint };
+    };
+    const descField = fieldOf("描述", "desc", "这个框的画面描述（自然语言，可插入 tag）");
+    const textField = fieldOf("文字", "text", "要画在框里的文字（可插入 tag）");
+    mid.appendChild(descField.wrap);
+    mid.appendChild(textField.wrap);
+    topWrap.appendChild(mid);
+    body.appendChild(topWrap);
+
+    // 下：tag 库（顶部一行＝标题 + 页签 + 预览图开关；搜索 + 单一滚动容器）
+    const tagsWrap = el("div", "yx-editor-tags");
+    const tagHead = el("div", "yx-editor-taghead");
+    tagsWrap.appendChild(tagHead);
+    const tagPanel = el("div", "yx-editor-taghost");
+    tagsWrap.appendChild(tagPanel);
+    body.appendChild(tagsWrap);
+    tagLib.head = tagHead;
+    try { buildTagLib(tagPanel); tagLibRefreshHeader(); } catch (error) { console.error("[MOSS YXBOX] Tag 库初始化失败", error); }
+    panel.appendChild(body);
+
+    const foot = el("div", "yx-editor-foot");
+    const note = el("div", "yx-editor-note", "");
+    foot.appendChild(note);
+    const undoBtn = el("button", "yx-chip yx-editor-btn", "撤销");
+    undoBtn.type = "button";
+    undoBtn.title = "撤销编辑库里的操作（只影响本弹窗，不动节点撤销栈）";
+    undoBtn.addEventListener("click", editorUndo);
+    foot.appendChild(undoBtn);
+    const redoBtn = el("button", "yx-chip yx-editor-btn", "重做");
+    redoBtn.type = "button";
+    redoBtn.title = "重做编辑库里的操作";
+    redoBtn.addEventListener("click", editorRedo);
+    foot.appendChild(redoBtn);
+    const selWrap = el("label", "yx-editor-sync");
+    const selCheck = el("input", "yx-editor-check");
+    selCheck.type = "checkbox";
+    selCheck.title = "打开后点任意一级/二级/三级对象都是「选中」，不会插进输入框";
+    selCheck.addEventListener("change", () => tagLibSelectMode(selCheck.checked));
+    selWrap.appendChild(selCheck);
+    selWrap.appendChild(el("span", "", "选择"));
+    foot.appendChild(selWrap);
+    const moveSelBtn = el("button", "yx-chip yx-editor-btn", "移动");
+    moveSelBtn.type = "button";
+    moveSelBtn.title = "把选中的对象移动到别的库/分类";
+    moveSelBtn.addEventListener("click", () => tagLibSelectionAction("move"));
+    foot.appendChild(moveSelBtn);
+    const delSelBtn = el("button", "yx-chip yx-editor-btn", "删除");
+    delSelBtn.type = "button";
+    delSelBtn.title = "删除选中的对象（需要再点一次确认）";
+    delSelBtn.addEventListener("click", (event) => tagLibSelectionAction("delete", event.currentTarget));
+    foot.appendChild(delSelBtn);
+    const syncCheck = null;
+    const revertBtn = el("button", "yx-chip yx-editor-btn", "还原");
+    revertBtn.type = "button";
+    revertBtn.title = "把本次所有改动还原成打开编辑库之前的样子";
+    revertBtn.addEventListener("click", () => {
+      for (const item of editorState.snap || []) {
+        item.box.desc = item.desc;
+        item.box.text = item.text;
+      }
+      editorLoadActive();
+      editorSchedulePreview();
+      showToast("已还原本次改动（还没应用）");
+    });
+    foot.appendChild(revertBtn);
+    const cancelBtn = el("button", "yx-chip yx-editor-btn", "关闭不保存");
+    cancelBtn.type = "button";
+    cancelBtn.addEventListener("click", () => closePromptEditor(false));
+    foot.appendChild(cancelBtn);
+    const applyBtn = el("button", "yx-chip yx-editor-btn yx-editor-btn-ok", "应用并关闭");
+    applyBtn.type = "button";
+    applyBtn.title = "把预览写进框（并记一步撤销），然后关闭";
+    applyBtn.addEventListener("click", () => closePromptEditor(true));
+    foot.appendChild(applyBtn);
+    panel.appendChild(foot);
+    // 右下角缩放把手：像节点一样自由改弹窗大小（双击回默认大小）
+    const grip = el("div", "yx-editor-grip");
+    grip.title = "拖动这里改弹窗大小（双击回到默认大小）";
+    panel.appendChild(grip);
+    let gripStart = null;
+    let gripMove = null;
+    let gripUp = null;
+    const stopGrip = () => {
+      if (gripMove) globalThis.removeEventListener("pointermove", gripMove, true);
+      if (gripUp) {
+        globalThis.removeEventListener("pointerup", gripUp, true);
+        globalThis.removeEventListener("pointercancel", gripUp, true);
+      }
+      gripMove = null;
+      gripUp = null;
+    };
+    grip.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const size = editorPanelSize();
+      gripStart = { x: event.clientX, y: event.clientY, w: size.pw, h: size.ph };
+      gripMove = (moveEvent) => {
+        if (!gripStart) return;
+        const vw = Number(globalThis.innerWidth) || 1280;
+        const vh = Number(globalThis.innerHeight) || 800;
+        const w = Math.max(760, Math.min(vw - 16, gripStart.w + (moveEvent.clientX - gripStart.x)));
+        const h = Math.max(460, Math.min(vh - 16, gripStart.h + (moveEvent.clientY - gripStart.y)));
+        editorState.size = { w: Math.round(w), h: Math.round(h) };
+        applyEditorPos();
+      };
+      gripUp = () => {
+        gripStart = null;
+        stopGrip();
+        saveEditorPrefs();
+      };
+      globalThis.addEventListener("pointermove", gripMove, true);
+      globalThis.addEventListener("pointerup", gripUp, true);
+      globalThis.addEventListener("pointercancel", gripUp, true);
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    grip.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      editorState.size = null;
+      applyEditorPos();
+      saveEditorPrefs();
+    });
+
+    // 点遮罩不关：避免手一滑把没应用的改动弄没
+    overlay.addEventListener("pointerdown", (event) => event.stopPropagation());
+
+    document.body.appendChild(overlay);
+    editorState.dom = {
+      overlay, panel, countEl, objList, descField, textField, tagPanel, note, syncCheck,
+      lastKey: "desc", areas: { desc: descField.area, text: textField.area }, tagLib,
+    };
+    return editorState.dom;
+  };
+
+  const editorUpdateCount = () => {
+    const dom = editorState.dom;
+    if (!dom) return;
+    const total = editorBoxes().length;
+    const on = editorState.checked.size;
+    dom.countEl.textContent = `勾选 ${on} / 共 ${total} 个框`;
+  };
+
+  const editorLoadActive = () => {
+    const dom = editorState.dom;
+    if (!dom) return;
+    const box = editorState.active;
+    if (!box) {
+      dom.descField.area.value = "";
+      dom.textField.area.value = "";
+      dom.descField.area.disabled = true;
+      dom.textField.area.disabled = true;
+      dom.descField.hint.textContent = "";
+      dom.textField.hint.textContent = "";
+      return;
+    }
+    dom.descField.area.disabled = false;
+    dom.textField.area.disabled = false;
+    const single = false;
+    dom.descField.area.value = String(box.desc || "");
+    dom.textField.area.value = String(box.text || "");
+    const where = single ? `全部 ${editorState.checked.size} 个勾选对象` : `当前对象 ${itemLabel(box)}`;
+    dom.descField.hint.textContent = `改动写入：${where}`;
+    dom.textField.hint.textContent = `改动写入：${where}`;
+  };
+
+  const editorWriteField = (key, value) => {
+    if (editorState.open && !editorState.restoring && key !== undefined) {
+      const now = Date.now();
+      if (!editorState.lastUndoAt || now - editorState.lastUndoAt > 700) editorPushUndo();
+      else editorState.lastUndoAt = now;
+    }
+    const targets = editorState.active ? [editorState.active] : [];
+    for (const box of targets) box[key] = value;
+    editorSchedulePreview();
+  };
+
+  const editorSchedulePreview = () => {
+    if (editorState.timer) return;
+    editorState.timer = setTimeout(() => {
+      editorState.timer = 0;
+      try { refreshRows(); } catch (_error) { /* 忽略 */ }
+      try { paint(); } catch (_error) { /* 忽略 */ }
+    }, 120);
+  };
+
+  const editorPollSync = () => {
+  if (!editorState.open || !editorState.dom) return;
+  try {
+    const picked = editorBoxes().filter((box) => S.selected.has(box));
+    if (picked.length) {
+      const same = picked.length === editorState.checked.size && picked.every((box) => editorState.checked.has(box));
+      if (!same) {
+        editorState.checked = new Set(picked);
+        if (!editorState.checked.has(editorState.active)) editorState.active = picked[0];
+        const boxes = editorBoxes();
+        for (const box of boxes) box.__yxId = boxKey(box);
+        renderEditorObjects();
+        editorUpdateCount();
+        editorLoadActive();
+      }
+    }
+    const box = editorState.active;
+    const areas = editorState.dom.areas || {};
+    const desc = String(box && box.desc || "");
+    const text = String(box && box.text || "");
+    const activeEl = document.activeElement;
+    if (areas.desc && activeEl !== areas.desc && areas.desc.value !== desc) areas.desc.value = desc;
+    if (areas.text && activeEl !== areas.text && areas.text.value !== text) areas.text.value = text;
+  } catch (error) {
+    /* 同步失败不影响编辑 */
+  }
+};
+
+const editorSyncToNode = () => {
+    if (!editorState.open || !editorState.dom) return;
+    const boxes = editorBoxes().filter((box) => editorState.checked.has(box));
+    editorState.syncing = true;
+    try {
+      S.selected.clear();
+      for (const box of boxes) S.selected.add(box);
+      if (boxes.length > 1 && !state.multi) {
+        state.multi = true;
+        try { multiBtn && multiBtn.classList.add("yx-on"); } catch (error) { /* 忽略 */ }
+      }
+    } finally {
+      editorState.syncing = false;
+    }
+    try { syncRows(); } catch (error) { /* 忽略 */ }
+    try { paint(); } catch (error) { /* 忽略 */ }
+  };
+
+  const editorSyncFromNode = () => {
+    if (!editorState.open || !editorState.dom || editorState.syncing) return;
+    const boxes = editorBoxes();
+    const picked = boxes.filter((box) => S.selected.has(box));
+    if (!picked.length) return;
+    const same = picked.length === editorState.checked.size && picked.every((box) => editorState.checked.has(box));
+    if (same) return;
+    editorState.checked = new Set(picked);
+    if (!editorState.checked.has(editorState.active)) editorState.active = picked[0];
+    renderEditorObjects();
+    editorUpdateCount();
+    editorLoadActive();
+  };
+
+  const editorNodeEdited = (box, field, value) => {
+    if (!editorState.open || !editorState.dom) return;
+    if (!editorState.checked.has(box)) {
+      editorState.checked.add(box);
+      editorUpdateCount();
+      renderEditorObjects();
+    }
+    const dom = editorState.dom;
+    if (field === "desc") dom.descField.area.value = String(value || "");
+    else dom.textField.area.value = String(value || "");
+    if (!editorState.lastUndoAt || Date.now() - editorState.lastUndoAt > 700) {
+      editorPushUndo();
+      editorState.lastUndoAt = Date.now();
+    }
+    editorSchedulePreview();
+  };
+
+  globalThis.__yxEditorSyncFromNode = editorSyncFromNode;
+  globalThis.__yxEditorNodeEdited = editorNodeEdited;
+
+  const editorSetActive = (box) => {
+    editorState.active = box || null;
+    const dom = editorState.dom;
+    if (dom) {
+      for (const row of dom.objList.children) {
+        row.classList.toggle("yx-editor-obj-on", row.__yxBox === box);
+      }
+    }
+    editorLoadActive();
+  };
+
+  const renderEditorObjects = () => {
+    const dom = editorState.dom;
+    if (!dom) return;
+    dom.objList.textContent = "";
+    const boxes = editorBoxes();
+    if (!boxes.length) {
+      dom.objList.appendChild(el("div", "yx-editor-empty", "这个节点还没有框：先在画布上拉一个框再来。"));
+      return;
+    }
+    for (const box of boxes) {
+      const row = el("div", "yx-editor-obj");
+      row.__yxBox = box;
+      if (box === editorState.active) row.classList.add("yx-editor-obj-on");
+      const check = el("input", "yx-editor-check");
+      check.type = "checkbox";
+      check.checked = editorState.checked.has(box);
+      check.addEventListener("change", () => {
+        if (check.checked) editorState.checked.add(box);
+        else editorState.checked.delete(box);
+        editorUpdateCount();
+        editorSyncToNode();
+        editorLoadActive();
+      });
+      row.appendChild(check);
+      row.appendChild(el("span", "yx-editor-objnum", itemLabel(box)));
+      row.appendChild(el("span", "yx-editor-objsum", editorSummary(box)));
+      row.addEventListener("click", (event) => {
+        if (event.target === check) return;
+        if (!editorState.checked.has(box)) {
+          editorState.checked.add(box);
+          check.checked = true;
+        }
+        editorUpdateCount();
+        editorSyncToNode();
+        editorSetActive(box);
+      });
+      dom.objList.appendChild(row);
+    }
+  };
+
+  const editorPanelSize = () => {
+    const panel = editorState.dom && editorState.dom.panel;
+    const vw = Number(globalThis.innerWidth) || 1280;
+    const vh = Number(globalThis.innerHeight) || 800;
+    const want = editorState.size && typeof editorState.size === "object" ? editorState.size : null;
+    const pw = want && want.w ? Number(want.w) : ((panel && (panel.offsetWidth || 0)) || Math.min(1340, vw * 0.96));
+    const ph = want && want.h ? Number(want.h) : ((panel && (panel.offsetHeight || 0)) || Math.min(840, vh * 0.92));
+    return { vw, vh, pw, ph };
+  };
+
+  // 把面板左上角夹进「标题栏一定完整可见」的范围：top 必须在屏内，left 至少留 120px 面板
+  const editorClampPos = (x, y) => {
+    const { vw, vh, pw } = editorPanelSize();
+    const minX = -(pw - 120);
+    const maxX = vw - 120;
+    const minY = 0;
+    const maxY = Math.max(0, vh - 56);
+    return {
+      x: Math.min(maxX, Math.max(minX, Number(x) || 0)),
+      y: Math.min(maxY, Math.max(minY, Number(y) || 0)),
+    };
+  };
+
+  const editorCenterPos = () => {
+    const { vw, vh, pw, ph } = editorPanelSize();
+    editorState.pos = editorClampPos(Math.round((vw - pw) / 2), Math.round(Math.max(0, (vh - ph) / 2)));
+  };
+
+  const applyEditorPos = () => {
+    const panel = editorState.dom && editorState.dom.panel;
+    if (!panel) return;
+    const { vw, vh, pw, ph } = editorPanelSize();
+    if (!editorState.pos) editorState.pos = { x: 0, y: 0 };
+    // 如果之前存的是「相对屏幕中心」的老值，先按新规则夹一次，保证拖不丢
+    editorState.pos = editorClampPos(editorState.pos.x, editorState.pos.y);
+    panel.style.position = "fixed";
+    panel.style.transform = "none";
+    panel.style.margin = "0";
+    panel.style.left = Math.round(editorState.pos.x) + "px";
+    panel.style.top = Math.round(editorState.pos.y) + "px";
+    if (editorState.size && editorState.size.w && editorState.size.h) {
+      panel.style.width = Math.round(Math.min(vw - 16, Math.max(760, Number(editorState.size.w) || 0))) + "px";
+      panel.style.height = Math.round(Math.min(vh - 16, Math.max(460, Number(editorState.size.h) || 0))) + "px";
+      panel.style.maxWidth = vw - 8 + "px";
+      panel.style.maxHeight = vh - 8 + "px";
+    } else {
+      panel.style.width = "";
+      panel.style.height = "";
+      panel.style.maxWidth = Math.min(1340, vw - 8) + "px";
+      panel.style.maxHeight = Math.min(840, vh - 8) + "px";
+    }
+  };
+
+  const saveEditorPrefs = () => {
+    const data = {
+      tipOn: editorState.tipOn === true,
+      pos: editorState.pos ? { x: Math.round(Number(editorState.pos.x) || 0), y: Math.round(Number(editorState.pos.y) || 0) } : null,
+      size: editorState.size && editorState.size.w ? { w: Math.round(Number(editorState.size.w) || 0), h: Math.round(Number(editorState.size.h) || 0) } : null,
+      bkDir: tagBackupState.dir || "",
+    };
+    state.editorPrefs = data;
+    try { serverStorePut("editor", data); } catch (_error) { /* 忽略 */ }
+  };
+
+  let editorPrefsLoaded = false;
+  const loadEditorPrefs = () => {
+    if (editorPrefsLoaded) return;
+    editorPrefsLoaded = true;
+    Promise.resolve(serverStoreGet("editor")).then((data) => {
+      if (!data || typeof data !== "object") return;
+      if (typeof data.tipOn === "boolean") editorState.tipOn = data.tipOn;
+      if (typeof data.bkDir === "string") tagBackupState.dir = data.bkDir;
+      if (data.size && typeof data.size === "object" && data.size.w) {
+        editorState.size = { w: Number(data.size.w) || 0, h: Number(data.size.h) || 0 };
+        applyEditorPos();
+      }
+      void data;
+    }).catch(() => { /* 忽略 */ });
+  };
+
+  const openPromptEditor = () => {
+    if (editorState.open) {
+      editorState.dom?.panel.classList.add("yx-editor-flash");
+      return;
+    }
+    const boxes = editorBoxes();
+    if (!boxes.length) {
+      showToast("还没有框可以编辑：先在画布上拉一个框");
+      return;
+    }
+    const dom = buildEditor();
+    editorState.snap = boxes.map((box) => ({ box, desc: box.desc, text: box.text }));
+    // 默认：节点上选中的框进编辑库；没选中就勾第一个（用户要求：不要一上来全勾）
+    const picked = [];
+    for (const box of S.selected) if (boxes.includes(box)) picked.push(box);
+    editorState.checked = new Set(picked.length ? picked : [boxes[0]]);
+    editorState.active = picked[0] || boxes[0];
+    editorState.syncAll = false;
+    editorState.syncing = false;
+    editorState.undo.length = 0;
+    editorState.redo.length = 0;
+    editorState.lastUndoAt = 0;
+    if (dom.syncCheck) dom.syncCheck.checked = false;
+    editorState.open = true;
+    state.editorOpen = true;
+    state.modal = dom.overlay;
+    // 每次打开都回到屏幕正中（用户要求：不要记住上次拖走的位置）
+    dom.overlay.style.display = "flex";
+    loadEditorPrefs();
+    editorState.pos = null;
+    editorCenterPos();
+    applyEditorPos();
+    renderEditorObjects();
+    editorUpdateCount();
+    editorLoadActive();
+    editorSyncToNode();
+  };
+
+  const closePromptEditor = (apply) => {
+    editorState.undo.length = 0;
+    editorState.redo.length = 0;
+    if (!editorState.open) return;
+    if (editorState.timer) {
+      clearTimeout(editorState.timer);
+      editorState.timer = 0;
+    }
+    let changed = 0;
+    for (const item of editorState.snap || []) {
+      if (String(item.box.desc || "") !== String(item.desc || "")
+        || String(item.box.text || "") !== String(item.text || "")) {
+        changed += 1;
+      }
+    }
+    if (apply) {
+      if (changed) {
+        commit(); // 只记一步撤销（快照 key 变了才会入栈）
+        showToast(`已应用：${changed} 个框的提示词已更新`);
+      } else {
+        showToast("没有改动，不需要应用");
+      }
+    } else {
+      for (const item of editorState.snap || []) {
+        item.box.desc = item.desc;
+        item.box.text = item.text;
+      }
+      if (changed) {
+        try { refreshRows(); } catch (_error) { /* 忽略 */ }
+        try { paint(); } catch (_error) { /* 忽略 */ }
+      }
+    }
+    editorState.open = false;
+    state.editorOpen = false;
+    state.modal = null;
+    editorState.snap = null;
+    editorState.checked = new Set();
+    editorState.active = null;
+    if (editorState.dom) editorState.dom.overlay.style.display = "none";
+  };
+
   state.root = root;
   state.wheelHandler = onWheelCapture;
   state.serialize = serialize;
@@ -9594,6 +14499,9 @@ function setup(node) {
   state.syncLayoutSocket = syncLayoutSocket;
   state.openSavePreset = openSavePreset;
   state.openPresetManager = openPresetManager;
+  state.openPromptEditor = openPromptEditor;
+  state.closePromptEditor = closePromptEditor;
+  state.loadPresetStore = loadPresetStore;
   state.applyPreset = applyPreset;
   state.fitNode = fitNode;
   state.fitNodeInitial = fitNodeInitial;
@@ -9613,6 +14521,8 @@ function setup(node) {
   state.resetUndo = resetUndo;
   syncBarButtons();
   resetUndo();
+  loadPresetStore();
+  loadEditorPrefs();
 }
 
 app.registerExtension({

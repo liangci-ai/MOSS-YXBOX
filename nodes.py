@@ -38,6 +38,9 @@ MODE_SCALED = "按缩放规则计算"
 MODE_SOURCE = "按导入原图的原始尺寸"
 MODE_BG1 = "按背景图1的原始尺寸"
 MODE_LIST = [MODE_CUSTOM, MODE_IMAGE, MODE_SCALED, MODE_SOURCE, MODE_BG1]
+# 前端会按「实际接了哪几张背景图」动态长出选项（按背景图1..64 的原始尺寸）；
+# 这里把所有可能出现的值都列上，工作流 / API 传进来时才不会被下拉校验拦掉。
+MODE_LIST += ["按背景图{}的原始尺寸".format(i) for i in range(2, 65)]
 
 # 画布比例：前端会按「实际接进来的图」动态改写这个下拉的选项，
 # 这里把所有可能出现的值都列上，保证把工作流 / API 里的值传给后端时能通过校验。
