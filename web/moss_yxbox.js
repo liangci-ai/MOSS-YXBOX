@@ -2,22 +2,7 @@ import { app } from "../../../scripts/app.js";
 
 const NODE_ID = "MOSS_YXBOX";
 
-// ---------------------------------------------------------------- 高度缓存（流畅性关键）
-// 前端每画一次节点都会走 arrange() → 本节点 DOM 控件的 computeSize()/getHeight()，
-// 也就是**每帧**问一次「你要多高」。原来这两个回调每次都去量 offsetHeight
-// （chrome 5 个元素 + 列表表头/标题 4 个元素），等于每帧强制同步重排一次整块界面；
-// 工作流里一有本节点，拖拽 / 缩放 / 切换标签都会被这种每帧重排拖慢。
-// 这里把「量出来的高度」缓存成纯数字：只有真正的布局变化（重排、换行、改尺寸）才重新量。
-// 变量与函数都放在模块最顶部，保证任何初始化顺序下调用都不会命中 TDZ。
-var chromeCacheAt = 0;
-var chromeCacheValue = 0;
-var desiredCacheAt = 0;
-var desiredCacheValue = 0;
-var HEIGHT_CACHE_MS = 400;
-function invalidateHeightCache() {
-  chromeCacheAt = 0;
-  desiredCacheAt = 0;
-}
+const HEIGHT_CACHE_MS = 400;
 
 const TYPE_OBJ = "物体框";
 const TYPE_TEXT = "文字框";
@@ -395,6 +380,119 @@ const CSS = `
 .yx-row.yx-bg-head span{text-align:center;}
 `;
 
+/* 皮肤层：见 SKIN_CSS（只改观感） */
+const SKIN_CSS = `
+/* ==================== 皮肤层（v1.1.0 新增：只改观感，不改尺寸与结构） ====================
+   全部规则只使用颜色 / 渐变 / 圆角 / 阴影 / 过渡，绝不改 padding、height、font-size、
+   border-width、margin —— 列表行高、工具条高度、状态栏高度都由原有规则决定，保持一致。 */
+/* 主面板的小标题更清楚一点 */
+.yx-head-label{color:#8f9bb3;letter-spacing:.4px;}
+/* 工具条：做成一条淡淡的浮起卡片 */
+.yx-bar.yx-tools{background:linear-gradient(180deg,rgba(31,39,54,.55),rgba(18,22,31,.22));
+  border-radius:10px;box-shadow:inset 0 0 0 1px rgba(96,126,186,.14);}
+/* 按钮：统一的玻璃质感 + 悬停微抬（transform 不影响布局尺寸） */
+.yx-chip{background:linear-gradient(180deg,#242b38,#1b202a);border-color:#333d4e;color:#c8d2e2;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05);}
+.yx-chip:hover{background:linear-gradient(180deg,#2c3442,#212838);border-color:#4c5e7e;color:#e9effb;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 3px 10px rgba(0,0,0,.35);transform:translateY(-1px);}
+.yx-chip.yx-on,.yx-chip.yx-tool.yx-on{background:linear-gradient(180deg,#27344f,#1f2942);border-color:#42608f;
+  color:#e2ecff;box-shadow:0 0 0 1px rgba(79,140,255,.28),inset 0 1px 0 rgba(255,255,255,.08);}
+.yx-chip.yx-active,.yx-chip.yx-drawon{background:linear-gradient(180deg,#3f7cff,#2b5fd9);border-color:#67a0ff;color:#fff;
+  box-shadow:0 0 0 1px rgba(103,160,255,.55),0 4px 14px rgba(40,95,220,.38);}
+.yx-chip.yx-undo{background:linear-gradient(180deg,#33291a,#2a2216);border-color:#e09540;color:#ffd8a8;
+  box-shadow:0 0 0 1px rgba(224,149,64,.4),inset 0 0 10px rgba(224,149,64,.12);}
+/* 三组主操作：蓝 / 绿 / 琥珀，各带一层渐变 */
+.yx-chip.yx-act-layout{background:linear-gradient(180deg,#1c2d4b,#16233a);border-color:#3869b3;color:#b8cff7;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06);}
+.yx-chip.yx-act-layout:hover{background:linear-gradient(180deg,#22355a,#1a2b48);border-color:#4f8cff;color:#eaf2ff;}
+.yx-chip.yx-act-editor{background:linear-gradient(180deg,#1c2d4b,#16233a);border-color:#3869b3;color:#b8cff7;}
+.yx-chip.yx-act-editor:hover{background:linear-gradient(180deg,#22355a,#1a2b48);border-color:#4f8cff;color:#eaf2ff;}
+.yx-chip.yx-act-image{background:linear-gradient(180deg,#193627,#14291f);border-color:#358052;color:#abe2bc;}
+.yx-chip.yx-act-image:hover{background:linear-gradient(180deg,#1d402e,#173225);border-color:#3fa168;color:#e2f8ea;}
+.yx-chip.yx-act-preset{background:linear-gradient(180deg,#3a2c12,#2c210e);border-color:#916b2c;color:#f3ddaf;}
+.yx-chip.yx-act-preset:hover{background:linear-gradient(180deg,#473613,#352812);border-color:#b3873c;color:#fff1cf;}
+.yx-chip.yx-soft-danger:hover{background:linear-gradient(180deg,#2d1e1e,#241a1a);border-color:#6b3a3a;color:#ffb3b3;}
+/* 描述框 / 输入框：柔和内凹 + 聚焦时一圈光 */
+.yx-prose-area{background:linear-gradient(180deg,#121722,#0f131a);border-color:#2f3a4c;border-radius:9px;}
+.yx-prose-area:focus{border-color:#4f8cff;background:#101622;
+  box-shadow:0 0 0 3px rgba(79,140,255,.16),inset 0 0 0 1px rgba(79,140,255,.2);}
+.yx-prose-label{color:#7f8ba3;letter-spacing:.5px;}
+/* 列表行：卡片化 + 选中发光 */
+.yx-item{background:linear-gradient(180deg,#1b2029,#171b23);border-color:#262e3c;border-radius:7px;}
+.yx-item:hover{background:linear-gradient(180deg,#212836,#1b2029);border-color:#37455c;box-shadow:0 2px 8px rgba(0,0,0,.3);}
+.yx-item.yx-sel{border-color:#4f8cff;background:linear-gradient(180deg,#1c2436,#182031);
+  box-shadow:0 0 0 1px rgba(79,140,255,.35),0 3px 12px rgba(12,26,60,.45);}
+.yx-item.yx-sel:hover{background:linear-gradient(180deg,#212b41,#1b2434);}
+.yx-item.yx-bg{background:linear-gradient(180deg,#231d14,#1b1712);border-color:#3a3220;}
+.yx-item.yx-bg.yx-sel{border-color:#f0b464;background:linear-gradient(180deg,#2b2416,#221c11);
+  box-shadow:0 0 0 1px rgba(240,180,100,.35),0 3px 12px rgba(64,44,12,.45);}
+.yx-item.yx-bg.yx-canvas-row{box-shadow:inset 0 0 0 1px #f0b464,0 0 14px rgba(240,180,100,.26);}
+.yx-item.yx-item-src{background:linear-gradient(180deg,#221c2c,#1b1623);border-color:#463a63;}
+.yx-item.yx-item-src.yx-sel{border-color:#b98cff;background:linear-gradient(180deg,#271f35,#201828);
+  box-shadow:0 0 0 1px rgba(185,140,255,.35),0 3px 12px rgba(50,30,90,.45);}
+/* 分区标题：左侧一条同色亮条（inset 阴影不占布局） */
+.yx-group{border-radius:7px;}
+.yx-group-bg{background:linear-gradient(90deg,rgba(240,180,100,.17),rgba(240,180,100,.05));
+  border-color:rgba(240,180,100,.34);color:#f6c682;box-shadow:inset 2px 0 0 #f0b464;}
+.yx-group-box{background:linear-gradient(90deg,rgba(79,140,255,.18),rgba(79,140,255,.05));
+  border-color:rgba(79,140,255,.34);color:#aac9ff;box-shadow:inset 2px 0 0 #4f8cff;}
+/* 吸顶表头：深色玻璃条 */
+.yx-row.yx-header{background:linear-gradient(180deg,#1e2533,#171d27);border-color:rgba(96,126,186,.2);
+  color:#95a2bb;letter-spacing:.2px;}
+.yx-row.yx-bg-head{background:linear-gradient(180deg,#251e14,#1b1710);border-color:rgba(240,180,100,.24);color:#d6ac6e;}
+/* 表头里的小按钮 */
+.yx-head-btn,.yx-num-head-btn{background:linear-gradient(180deg,#232c3d,#1b2331);border-color:#3a4760;color:#c2cddf;}
+.yx-head-btn:hover,.yx-num-head-btn:hover{background:linear-gradient(180deg,#2b3650,#222b3c);border-color:#4f8cff;color:#eef4ff;}
+.yx-num-head-btn-arm{background:linear-gradient(180deg,#46381a,#3a2f14);border-color:#c9a227;color:#ffe08a;}
+/* 行内输入框：只换颜色，尺寸一丝不动 */
+.yx-in,.yx-sel-type{background:#121722;border-color:#2b3444;color:#e4eaf5;}
+.yx-in:focus,.yx-sel-type:focus{border-color:#4f8cff;box-shadow:0 0 0 2px rgba(79,140,255,.2);}
+.yx-no-input:focus{background:#121722;border-color:#4f8cff;box-shadow:0 0 0 2px rgba(79,140,255,.2);color:#eef4ff;}
+.yx-color{border-color:#2b3444;}
+.yx-lock.yx-on{color:#ffd166;text-shadow:0 0 7px rgba(255,209,102,.45);}
+.yx-big{background:#121722;border-radius:6px;}
+/* 状态栏：一条收口玻璃条（加背景不改高度） */
+.yx-statusbar{background:linear-gradient(180deg,rgba(25,31,43,.92),rgba(17,21,29,.92));
+  border-top-color:#2b3444;border-radius:0 0 7px 7px;}
+.yx-statusbar b{color:#dde4f1;}
+.yx-statusbar .yx-sb-ver{color:#9fc2ff;font-weight:700;text-shadow:0 0 9px rgba(79,140,255,.4);}
+/* 画布区：外圈一层极淡的蓝光 */
+.yx-stage{border-radius:9px;border-color:#2d3648;
+  box-shadow:inset 0 0 26px rgba(0,0,0,.52),0 0 0 1px rgba(79,140,255,.07),0 4px 16px rgba(0,0,0,.35);}
+.yx-zoombadge{background:linear-gradient(180deg,rgba(33,41,57,.96),rgba(20,25,36,.96));
+  border-color:#3d4c66;box-shadow:0 2px 9px rgba(0,0,0,.45);}
+/* 右键菜单 / 气泡 / 弹窗 */
+.yx-menu{background:linear-gradient(180deg,#1e2532,#171c26);border-color:#3a4760;border-radius:11px;
+  box-shadow:0 18px 42px rgba(0,0,0,.66),0 0 0 1px rgba(120,150,200,.06);}
+.yx-menu-item{border-radius:7px;}
+.yx-menu-item:hover{background:linear-gradient(90deg,rgba(79,140,255,.24),rgba(79,140,255,.06));color:#fff;}
+.yx-menu-sep{background:#2b3444;}
+.yx-menu-type{background:linear-gradient(180deg,#222a38,#1b222d);border-color:#3a4760;color:#dfe6f2;}
+.yx-menu-type:hover{background:linear-gradient(180deg,#2a3446,#212a38);}
+.yx-toast{background:linear-gradient(180deg,rgba(40,50,68,.98),rgba(27,34,47,.98));border-color:#425272;
+  color:#e6ecf8;border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.5);}
+.yx-card{background:linear-gradient(180deg,#181e28,#131820);border-color:#333d4e;border-radius:14px;
+  box-shadow:0 26px 68px rgba(0,0,0,.7),0 0 0 1px rgba(120,150,200,.05);}
+.yx-card h3{color:#f1f5fd;}
+.yx-card textarea{background:#101520;border-color:#2f3a4c;border-radius:9px;}
+.yx-card textarea:focus{border-color:#4f8cff;box-shadow:0 0 0 3px rgba(79,140,255,.16);}
+.yx-modal{background:rgba(6,8,12,.68);}
+/* 预设卡片 / 小按钮 / 信息条 */
+.yx-preset{background:linear-gradient(180deg,#1b212b,#161a22);border-color:#2c3444;border-radius:9px;}
+.yx-preset:hover{border-color:#46587a;background:linear-gradient(180deg,#202834,#191e28);
+  box-shadow:0 4px 14px rgba(0,0,0,.35);}
+.yx-preset.yx-picked{border-color:#4f8cff;background:linear-gradient(180deg,#1e2a44,#18223a);
+  box-shadow:0 0 0 1px rgba(79,140,255,.45),0 4px 18px rgba(30,60,140,.35);}
+.yx-mini{background:linear-gradient(180deg,#242c3a,#1c222c);border-color:#333d4e;color:#c4cedd;}
+.yx-mini:hover{background:linear-gradient(180deg,#2b3546,#222a36);border-color:#46587a;}
+.yx-info{border-color:#33405a;background:rgba(30,38,52,.45);}
+.yx-menu-swatch{border-color:rgba(255,255,255,.32);}
+/* 滚动条：更细腻 */
+.yx-scroll::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(144,168,212,.4),rgba(92,112,152,.4));border-radius:5px;}
+.yx-scroll::-webkit-scrollbar-thumb:hover{background:rgba(154,178,222,.56);}
+.yx-editor-grip{filter:brightness(1.35);}
+`;
+
 function css3(value) {
   const text = String(value || "").trim().replace(/^#/, "");
   if (/^[0-9a-f]{3}$/i.test(text)) {
@@ -569,6 +667,24 @@ function setup(node) {
     const blank = raw === undefined || raw === null || raw === "" || !Number.isFinite(n);
     return blank ? 20 : Math.max(0, Math.min(999, Math.round(n)));
   }
+
+  // ---------------------------------------------------------------- 高度缓存（流畅性关键）
+  // 前端每画一次节点都会走 arrange() → 本节点 DOM 控件的 computeSize()/getHeight()，
+  // 也就是**每帧**问一次「你要多高」。原来这两个回调每次都去量 offsetHeight
+  // （chrome 5 个元素 + 列表表头/标题 4 个元素），等于每帧强制同步重排一次整块界面；
+  // 工作流里一有本节点，拖拽 / 缩放 / 切换标签都会被这种每帧重排拖慢。
+  // 这里把「量出来的高度」缓存成纯数字：只有真正的布局变化（重排、换行、改尺寸）才重新量。
+  // ★ 必须按节点隔离：旧版这 4 个变量放在模块顶层，同一工作流里的所有 MOSS 节点共用
+  //   同一份缓存，于是「A 画框变高后，B 在 400ms 内来问高度会拿到 A 的数」——表现为
+  //   多个节点的高度互相影响（A 每画一个框，B 也跟着长一点）。现在改成每个节点自己一份。
+  let chromeCacheAt = 0;
+  let chromeCacheValue = 0;
+  let desiredCacheAt = 0;
+  let desiredCacheValue = 0;
+  const invalidateHeightCache = () => {
+    chromeCacheAt = 0;
+    desiredCacheAt = 0;
+  };
 
   const state = (node.__yxbox = {
     ready: false,
@@ -929,7 +1045,8 @@ function setup(node) {
     .join(" ");
   style.textContent = CSS
     .replace("__BG_COLUMNS__", columnsOf(BG_COLS, BG_SEP))
-    .replace("__BOX_COLUMNS__", columnsOf(BOX_COLS, BOX_SEP));
+    .replace("__BOX_COLUMNS__", columnsOf(BOX_COLS, BOX_SEP))
+    + SKIN_CSS;
   document.head.appendChild(style);
 
   const root = el("div", "yx-root");
@@ -2011,7 +2128,10 @@ function setup(node) {
         // 忽略
       }
       layout();
-      growNodeToFit();
+      // 「显示行数」改小也要跟着收回来：这里用强制贴合（既能撑高也能压矮），
+      // 不能再用 growNodeToFit 的「只加不减」，否则把 20 改成 10 时节点会留一大块灰。
+      if (typeof state.fitNodeToContent === "function") state.fitNodeToContent(0, true);
+      else growNodeToFit();
       node.graph?.setDirtyCanvas?.(true, true);
     };
     // 输入过程中只把非数字清掉，失焦 / 回车 / 内容变化时才真正套用，免得每敲一位就重排一次
@@ -2029,7 +2149,7 @@ function setup(node) {
     return field;
   }
 
-  // 行数调大后界面会跟着变高：节点高度不够就撑到刚好够用（只加不减，不动你自己拉的尺寸）
+  // 行数调大后界面会跟着变高：节点高度不够就撑到刚好够用（正常路径用 fitNodeToContent 整体收放；行数没变时不动你自己拉的尺寸）
   const growNodeToFit = () => {
     try {
       const need = Math.round(neededNodeHeight());
@@ -2045,7 +2165,7 @@ function setup(node) {
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
   // 版本号不再写死在 JS 里（发版时最容易忘改）：先显示兜底串，随即向本插件后端
   // 的 /moss_yxbox/version 取「实际安装版本」覆盖它——改 pyproject.toml 后刷新页面即生效。
-  const STATUS_VERSION_FALLBACK = "1.0.9";
+  const STATUS_VERSION_FALLBACK = "1.1.0";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
@@ -4017,6 +4137,10 @@ function setup(node) {
   try { if (globalThis.__yxEditorSyncFromNode) globalThis.__yxEditorSyncFromNode(); } catch (_error) { /* 忽略 */ }
     invalidateHeightCache();
     const __yxT0 = __yxNow();
+    // 上一次的行数（数据条数，不是 DOM 行数：空列表时 DOM 里是一个占位行）：
+    // refreshRows 末尾用它判断「行集合真的变了没有」，变了才去同步节点高度。
+    // 载入工作流时它会被置空，保证「已存过的节点尺寸」不会被插件覆盖。
+    const __prevRowCount = state.lastRowCount;
     // 背景图 / 原图有没有变动，决定「画布尺寸来源」下拉里有哪些选项
     syncSizeModeOptions();
     // 任何时候画列表，都先确认每个对象都有编号：一旦编上就跟着对象走，永不改号
@@ -4067,6 +4191,7 @@ function setup(node) {
       refreshInfo();
       state.syncBar?.();
       paint();
+      state.lastRowCount = S.boxes.length + bgs.length;
       __yxAcc("refreshRows", __yxNow() - __yxT0);
       return;
     }
@@ -4090,6 +4215,9 @@ function setup(node) {
     state.syncBar?.();
     // 行数变了：重新量一遍列表高度，多了就出滚动条（layout 还没就绪时跳过）
     if (state.layoutReady) layout();
+    // 行集合真的变了（加框 / 删框 / 删背景图 / 导入布局）→ 节点高度跟着「刚好装下」
+    state.lastRowCount = S.boxes.length + bgs.length;
+    fitNodeToContent(__prevRowCount);
     __yxAcc("refreshRows", __yxNow() - __yxT0);
   }
 
@@ -4328,7 +4456,7 @@ function setup(node) {
   };
 
   // 「画布区高度」输入框：留空 = 自动；填数字 = 固定高度（140–2600），
-  // 填得比节点剩下的空间还高时，一次性把节点撑高到刚好装下（只加不减，之后不再碰节点尺寸）
+  // 填得比节点剩下的空间还高时，把节点调到刚好装下（按当前行数整体收放）
   function applyStageHeightInput() {
     const input = state.stageHInput;
     if (!input) return;
@@ -4341,12 +4469,16 @@ function setup(node) {
     // 0 也要存下来：存过 0 才是「明确要自动」，没存过按默认 600
     node.properties.yxStageH = value;
     layout();
-    try {
-      const need = Math.round(neededNodeHeight());
-      const current = Math.round(Number(node?.size?.[1]) || 0);
-      if (need > current && node?.setSize) node.setSize([node.size[0], need]);
-    } catch (_error) {
-      // 忽略
+    // 画布区高度改小（或改回自动）时也要把节点收回来：强制贴合，既撑高也压矮。
+    if (typeof state.fitNodeToContent === "function") state.fitNodeToContent(0, true);
+    else {
+      try {
+        const need = Math.round(neededNodeHeight());
+        const current = Math.round(Number(node?.size?.[1]) || 0);
+        if (need > current && node?.setSize) node.setSize([node.size[0], need]);
+      } catch (_error) {
+        // 忽略
+      }
     }
     commit();
   }
@@ -4423,8 +4555,8 @@ function setup(node) {
   const neededNodeHeight = () => baseNodeHeight();
 
   let fitPending = false;
-  // 节点高度完全交给你：插件只在「工作流里还没存过尺寸」时撑一次，之后永不自动改节点高度。
-  // 拉高、压回、贴长文、删长文都只影响文本框内部的滚动条，不会再有「拉长了缩不回去」。
+  // 节点高度现在会跟着列表行数自动收放（见 fitNodeToContent）：行数变了就调到刚好装下，行数没变时不碰节点尺寸。
+  // 拉高、压回、贴长文、删长文都只影响文本框内部的滚动条。
   const syncNodeHeight = () => {};
   const fitNode = () => {};
 
@@ -4445,6 +4577,63 @@ function setup(node) {
       node.setSize([width, height]);
     }
   };
+
+  // 行集合真的变了（加框 / 删框 / 删背景图 / 导入布局）之后，把节点高度同步到「刚好装下」。
+  // 目标高度直接沿用「画布区高度输入框」那条已经在用的公式 neededNodeHeight()，
+  // 它把原生控件高度 + 46 + 列表/画布/描述/状态栏 + 14 全算在内，不会把底部裁掉。
+  // 只在「行数变化」时触发：手动拉高 / 压矮节点不会触发，所以不会和用户调尺寸打架。
+  // fitBusy 是重入锁：setSize 可能立刻引起前端 onResize → 重排，期间挡住重复调整。
+  const fitNodeToContent = (prevRowCount, force = false) => {
+    if (!state.ready || !node || typeof node.setSize !== "function" || state.fitBusy) return;
+    if (state.lodOn && force) return;
+    const rowCount = S.boxes.length + S.bgs.filter(Boolean).length;
+    if (!force) {
+      if (!Number.isFinite(prevRowCount)) return;
+      if (rowCount === prevRowCount) return;
+    }
+    const need = Math.round(neededNodeHeight());
+    const current = Math.round(Number(node.size?.[1]) || 0);
+    if (!need || !current || Math.abs(need - current) <= 6) return;
+    state.fitBusy = true;
+    try {
+      node.setSize([Math.round(Number(node.size?.[0]) || 980), need]);
+      if (node.graph && typeof node.graph.setDirtyCanvas === "function") {
+        node.graph.setDirtyCanvas(true, true);
+      }
+    } catch (_error) {
+      // 忽略
+    } finally {
+      setTimeout(() => {
+        state.fitBusy = false;
+      }, 80);
+    }
+  };
+  state.fitNodeToContent = fitNodeToContent;
+
+  // 载入 / 切换工作流之后：等前端把节点、控件、行高都排稳，再强制把高度收放到「刚好装下」。
+  // 只靠「行数变化」触发的话，切回来会停在存档里那个旧高度，要等下一次加框 / 删框才会贴回去；
+  // 这里先同步跑一次（通常 onConfigure 里 layout 已经跑过），再隔 120ms 重试几次，
+  // 等列表行高 / 描述框高度量准以后自动修正。token 用来作废上一次的残留重试。
+  let loadFitToken = 0;
+  const scheduleLoadFit = () => {
+    const token = ++loadFitToken;
+    let attempts = 0;
+    const run = () => {
+      if (token !== loadFitToken) return;
+      attempts += 1;
+      try {
+        if (state.ready && state.layoutReady) {
+          invalidateHeightCache();
+          fitNodeToContent(0, true);
+        }
+      } catch (_error) {
+        // 忽略
+      }
+      if (attempts < 4) setTimeout(run, 120);
+    };
+    run();
+  };
+  state.scheduleLoadFit = scheduleLoadFit;
 
   const layout = () => {
     // 交互降级期间元素是 display:none，量出来的高度全是 0，会把缓存写坏。
@@ -6565,11 +6754,16 @@ function setup(node) {
     const __yxT0 = (globalThis.performance?.now?.() || Date.now());
     const result = originalConfigure?.call?.(this, info);
     try {
+      // 载入工作流：先把「上一次行数」清空，后面 refreshRows 就不会拿旧行数对比，
+      // 也就不会把工作流里存过的节点尺寸覆盖掉；恢复完成后重新记下行数。
+      state.lastRowCount = null;
       configure(info);
       // 工作流里存下来的尺寸可能比列表需要的还窄（编号列加宽过，老档更容易窄）：
       // 载入完再撑一次宽度，保证「编号 / 重命名 / 各把锁 / 画布 / 删除」这些按钮全露出来。
-      // 高度不动——你调过的高度下次打开还在。
       fitNodeInitial();
+      // 高度：切到别的工作流再切回来时，存档里的高度可能已经和当前列表行数对不上，
+      // 载入后强制贴合一次（行数没变也贴合），这样切回来就是「刚好装下」的状态。
+      state.scheduleLoadFit?.();
     } catch (error) {
       console.error("[MOSS YXBOX] 恢复画布数据失败", error);
     }
@@ -9483,7 +9677,7 @@ function setup(node) {
   });
   domWidget.computeSize = function (width) {
     const __yxT0 = __yxNow();
-    const out = [Math.max(360, width || 520), Math.min(domDesiredHeight(), 1600)];
+    const out = [Math.max(360, width || 520), Math.min(domDesiredHeight(), 4000)];
     __yxAcc("computeSize", __yxNow() - __yxT0);
     return out;
   };
@@ -10201,11 +10395,82 @@ const editorState = {
     ".yx-tag-lv1 .yx-tag-lv2chip.yx-tag-lv2chip-on{background:#3a2c18;border-color:#a8792c;color:#ffe3b0;}",
   ].join("");
 
+  const SKIN_CSS_EDITOR = `
+/* ==================== 皮肤层 · 提示词编辑库 / Tag 库 / 各类小弹窗 ==================== */
+.yx-editor{background:linear-gradient(180deg,#161b24,#10141b);border-color:#333d4e;border-radius:14px;
+  box-shadow:0 32px 92px rgba(0,0,0,.72),0 0 0 1px rgba(120,150,200,.06);}
+.yx-editor-head{background:linear-gradient(180deg,#1d2431,#171d27);border-bottom-color:#2b3444;}
+.yx-editor-title{color:#f3f7ff;letter-spacing:.3px;}
+.yx-editor-count{color:#93a0b8;}
+.yx-editor-topwrap{background:rgba(20,25,34,.55);border-bottom-color:#2b3444;}
+.yx-editor-foot{background:linear-gradient(180deg,#1c2331,#171d27);border-top-color:#2b3444;}
+.yx-editor-left,.yx-editor-right{background:linear-gradient(180deg,#171c25,#141820);border-color:#2b3444;}
+.yx-editor-colhead{background:rgba(29,36,49,.8);border-bottom-color:#2b3444;color:#9dabc2;letter-spacing:.3px;}
+.yx-editor-area{background:#101520;border-color:#2f3a4c;border-radius:9px;}
+.yx-editor-area:focus{border-color:#4f8cff;box-shadow:0 0 0 3px rgba(79,140,255,.16);}
+.yx-editor-obj{border-radius:9px;}
+.yx-editor-obj:hover{background:linear-gradient(90deg,rgba(79,140,255,.13),rgba(79,140,255,.03));}
+.yx-editor-obj-on{background:linear-gradient(90deg,rgba(79,140,255,.24),rgba(79,140,255,.08));
+  border-color:#4f8cff;box-shadow:0 0 0 1px rgba(79,140,255,.3);}
+.yx-editor-btn-ok{background:linear-gradient(180deg,#3f7cff,#2b5fd9);border-color:#67a0ff;color:#fff;
+  box-shadow:0 3px 12px rgba(40,95,220,.38);}
+.yx-editor-setbtn:hover{background:linear-gradient(180deg,#22355a,#1a2b48);border-color:#4f8cff;color:#eaf2ff;}
+/* 页签 */
+.yx-tag-tabs{background:rgba(19,24,32,.85);border-color:#2b3444;}
+.yx-tag-tab{background:linear-gradient(180deg,#222a38,#1a2029);border-color:#333d4e;color:#cfd9e9;}
+.yx-tag-tab:hover{background:linear-gradient(180deg,#293341,#202734);color:#ecf2ff;}
+.yx-tag-tab-on{background:linear-gradient(180deg,#33578f,#26426e);border-color:#4f8cff;color:#fff;
+  box-shadow:0 0 0 1px rgba(79,140,255,.3);}
+.yx-tag-tabadd{background:rgba(30,37,49,.6);border-color:#3a4760;color:#9dabc2;}
+/* 分类行 */
+.yx-tag-cat{background:linear-gradient(180deg,#222936,#1b212b);border-color:#2e3745;color:#c8d1e1;}
+.yx-tag-cat:hover{background:linear-gradient(180deg,#283140,#202834);border-color:#42567a;color:#eef4ff;}
+.yx-tag-cat.yx-tag-cat-on{background:linear-gradient(180deg,#2b4773,#22375c);border-color:#4f8cff;color:#eaf2ff;
+  box-shadow:0 0 0 1px rgba(79,140,255,.28);}
+/* 四层容器 */
+.yx-tag-lv0{background:linear-gradient(180deg,#1c222c,#171c25);border-color:#2b3444;}
+.yx-tag-lv1{background:linear-gradient(180deg,#1b2534,#171e29);border-color:#2b3d52;}
+.yx-tag-lv2{background:linear-gradient(180deg,#1b2926,#16211f);border-color:#2c4a42;}
+.yx-tag-lv3{background:linear-gradient(180deg,#1d222c,#181c24);border-color:#303442;}
+.yx-tag-lv1 .yx-tag-lvlab{background:linear-gradient(180deg,#24374f,#1d2c3f);color:#aecbe8;}
+.yx-tag-lv2 .yx-tag-lvlab{background:linear-gradient(180deg,#24463d,#1c352e);color:#aed6c6;}
+.yx-tag-lv3 .yx-tag-lvlab{background:linear-gradient(180deg,#2d3344,#252a37);color:#bcc4d8;}
+/* Tag 卡片 */
+.yx-tag-card{background:linear-gradient(180deg,#222937,#1b2030);border-color:#303a4c;border-radius:9px;}
+.yx-tag-card:hover{border-color:#4f8cff;background:linear-gradient(180deg,#283040,#202736);
+  box-shadow:0 5px 16px rgba(0,0,0,.42),0 0 0 1px rgba(79,140,255,.18);}
+.yx-tag-card-on{background:linear-gradient(180deg,#233250,#1b2740);border-color:#4f8cff;
+  box-shadow:0 0 0 1px rgba(79,140,255,.35);}
+.yx-tag-card-thumb{background:#10141b;border-color:#2c3444;}
+.yx-tag-card-thumb-empty{background:#0e1219;border-color:#333d4e;color:#657086;}
+.yx-tag-lv2chip{background:linear-gradient(180deg,#1c222c,#171c24);border-color:#2c3444;}
+.yx-tag-lv2chip:hover{background:linear-gradient(180deg,#232b38,#1c222d);border-color:#3f5474;}
+.yx-tag-lv2chip-on{background:linear-gradient(180deg,#233250,#1b2740);border-color:#4f8cff;color:#dbe8ff;}
+.yx-tag-lv2chip.yx-tag-lv2chip-on{background:linear-gradient(180deg,#2f3d24,#27321e);border-color:#829e4d;color:#eaf6d3;}
+.yx-tag-lv1 .yx-tag-lv2chip.yx-tag-lv2chip-on{background:linear-gradient(180deg,#3d2f1a,#332716);border-color:#ac7d2e;color:#ffe6b6;}
+/* 卡片的浮动操作条 */
+.yx-tag-acts,.yx-tag-acts-float,.yx-mini-menu{background:linear-gradient(180deg,#1e2635,#171d28);border-color:#3a4760;
+  box-shadow:0 12px 30px rgba(0,0,0,.58);}
+.yx-tag-act{background:linear-gradient(180deg,#27354d,#1f2a3d);border-color:#3a5680;color:#d0e1ff;}
+.yx-tag-act:hover{background:linear-gradient(180deg,#304463,#26354e);border-color:#4a7bd0;color:#fff;}
+.yx-mini-item:hover{background:linear-gradient(90deg,rgba(79,140,255,.24),rgba(79,140,255,.06));border-color:#3a5680;color:#fff;}
+/* 编辑库里的各类小弹窗 */
+.yx-tagact-box,.yx-pv-box,.yx-set-box{background:linear-gradient(180deg,#181f2b,#12161f);border-color:#333d4e;
+  border-radius:14px;box-shadow:0 26px 72px rgba(0,0,0,.68);}
+.yx-set-head{background:linear-gradient(180deg,#1f2735,#19202c);border-bottom-color:#2b3444;}
+.yx-set-tab{background:linear-gradient(180deg,#232b39,#1b222e);border-color:#333d4e;color:#b6c1d4;}
+.yx-set-tab.yx-set-tab-on{background:linear-gradient(180deg,#2b4773,#22375c);border-color:#4f8cff;color:#eaf2ff;}
+.yx-set-input{background:#101520;border-color:#2f3a4c;color:#e2e8f3;}
+.yx-set-sep{background:#2b3444;}
+.yx-pv-body{background:#0e1219;border-radius:10px;}
+.yx-pv-img{border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.5);}
+`;
+
   const ensureEditorStyle = () => {
     if (editorStyleEl || typeof document === "undefined") return;
     editorStyleEl = document.createElement("style");
     editorStyleEl.id = "yx-editor-style";
-    editorStyleEl.textContent = EDITOR_CSS + TAG_CSS_EXTRA;
+    editorStyleEl.textContent = EDITOR_CSS + TAG_CSS_EXTRA + SKIN_CSS_EDITOR;
     document.head.appendChild(editorStyleEl);
   };
 
@@ -10227,8 +10492,45 @@ const tagLib = {
   lib: "tags", cat: "", sub: "", series: "", q: "", dom: null, head: null,
   mine: null, libs: null, error: "",
   selectMode: false,
+  // 多选筛选：各级「点亮」的项各自记在 Set/Map 里，切库回来不丢；cat/sub/series/sel 仍保留为「当前主选」
+  catSel: new Set(), subSel: new Set(), seriesSel: new Set(), libSelMap: new Map(),
 };
 const tagLibSel = new Set();
+const tagSubKey = (cat, sub) => String(cat) + "\u0001" + String(sub);
+const tagSubPair = (key) => {
+  const text = String(key || "");
+  const at = text.indexOf("\u0001");
+  return at < 0 ? ["", text] : [text.slice(0, at), text.slice(at + 1)];
+};
+const libSelSet = () => {
+  const id = String(tagLib.lib || "");
+  if (!tagLib.libSelMap.has(id)) tagLib.libSelMap.set(id, new Set());
+  return tagLib.libSelMap.get(id);
+};
+const libSelPathsOf = (set) => Array.from(set || []).map((key) => {
+  const parsed = tagLibKeyParse(key);
+  return parsed && parsed.path ? parsed.path : null;
+}).filter(Boolean);
+const libSelDeepPaths = () => {
+  const paths = libSelPathsOf(libSelSet());
+  if (!paths.length) return [];
+  const depth = paths.reduce((max, path) => Math.max(max, path.length), 1);
+  return paths.filter((path) => path.length === depth);
+};
+// cat/sub/series/sel 是旧字段，继续表示「当前主选」：新增、移动、删除等流程都按它取上下文
+const syncTagLegacy = () => {
+  tagLib.cat = Array.from(tagLib.catSel)[0] || "";
+  const subs = Array.from(tagLib.subSel);
+  tagLib.sub = subs.length ? tagSubPair(subs[0])[1] : "";
+  tagLib.series = Array.from(tagLib.seriesSel)[0] || "";
+  const deep = libSelDeepPaths();
+  tagLib.sel = deep.length ? deep[0].slice() : [];
+};
+const toggleInSet = (set, value) => {
+  if (set.has(value)) { set.delete(value); return false; }
+  set.add(value);
+  return true;
+};
 
 const lowerOf = (text) => String(text || "").toLowerCase();
 
@@ -10336,7 +10638,9 @@ const loadTagLib = () => {
     .then((data) => {
       tagLib.groups = Array.isArray(data && data.groups) ? data.groups : [];
       const first = tagLib.groups[0];
-      if (!tagLib.cat && first) tagLib.cat = String(first.n || "");
+      // 首次载入默认点亮第一个一级分类；用户手动全部取消后不再自动点亮
+      if (!tagLib.catSel.size && first) tagLib.catSel.add(String(first.n || ""));
+      syncTagLegacy();
     })
     .catch((error) => {
       tagLib.tagsError = "标签数据读取失败：" + (error && error.message ? error.message : String(error));
@@ -10420,7 +10724,7 @@ const libCatItems = (found, depth, prefix) => (found.cats || [])
 const libLeafRows = (found, prefix) => (found.tags || [])
   .filter((row) => row.p.length === libLevelsOf(found) - 1 && pathSame(row.p, prefix));
 const libPrefix = () => (Array.isArray(tagLib.sel) ? tagLib.sel : []);
-const libPick = (libId) => { tagLib.lib = libId; tagLib.sel = []; };
+const libPick = (libId) => { tagLib.lib = libId; syncTagLegacy(); };
 
 const tagsOfSub = (sub) => (Array.isArray(sub && sub.t) ? sub.t.length : 0);
 const tagsOfGroup = (group) => (Array.isArray(group && group.s) ? group.s.reduce((sum, sub) => sum + tagsOfSub(sub), 0) : 0);
@@ -10453,21 +10757,41 @@ const lv2List = () => {
   const lib = tagLib.lib;
   if (lib.startsWith("lib:")) return [];
   if (lib !== "tags") return [];
-  const group = (tagLib.groups || []).find((g) => String(g.n || "") === tagLib.cat);
-  const subs = group && Array.isArray(group.s) ? group.s : [];
-  const list = subs
-    .map((sub) => ({ name: String(sub.n || ""), count: tagsOfSub(sub) }))
-    .filter((item) => item.name && !overIsRemoved(keySub("tags", tagLib.cat, item.name)));
-  for (const add of tagOver.added[keyCat("tags", tagLib.cat)] || []) {
-    const name = String(add.t || "");
-    if (name && !list.some((item) => item.name === name)) list.push({ name, count: 0 });
+  const groups = tagLib.groups || [];
+  // 多选：点亮多个一级分类时，二级行 = 这些分类下所有子分类的并集；一个都没点亮就列全部
+  const catNames = tagLib.catSel.size
+    ? Array.from(tagLib.catSel)
+    : groups.map((group) => String(group.n || "")).filter(Boolean);
+  const out = [];
+  for (const catName of catNames) {
+    const group = groups.find((g) => String(g.n || "") === catName);
+    const subs = group && Array.isArray(group.s) ? group.s : [];
+    for (const sub of subs) {
+      const name = String(sub.n || "");
+      if (!name) continue;
+      if (overIsRemoved(keySub("tags", catName, name))) continue;
+      out.push({
+        key: keySub("tags", catName, name),
+        cat: catName,
+        name,
+        show: overShowName(keySub("tags", catName, name), name),
+        count: tagsOfSub(sub),
+      });
+    }
+    for (const add of tagOver.added[keyCat("tags", catName)] || []) {
+      const name = String(add.t || "");
+      if (!name) continue;
+      if (out.some((item) => item.cat === catName && item.name === name)) continue;
+      out.push({
+        key: keySub("tags", catName, name),
+        cat: catName,
+        name,
+        show: overShowName(keySub("tags", catName, name), name),
+        count: 0,
+      });
+    }
   }
-  return list.map((item) => ({
-    key: keySub("tags", tagLib.cat, item.name),
-    name: item.name,
-    show: overShowName(keySub("tags", tagLib.cat, item.name), item.name),
-    count: item.count,
-  }));
+  return out;
 };
 
 const tagRows = () => {
@@ -10488,28 +10812,31 @@ const tagRows = () => {
     return out;
   }
   if (lib === "chars") {
-    const series = tagLib.series;
-    const rows = (tagLib.charsBySeries && tagLib.charsBySeries.get(series)) || [];
-    for (const row of rows) {
-      const name = String(row[0] || "");
-      const key = keyChar(name);
-      if (overIsRemoved(key)) continue;
-      const rn = overRename(key);
-      const shownName = rn && rn.t ? rn.t : name;
-      const aliases = rn && rn.cn ? rn.cn : String(row[2] || "");
-      const app = String(row[3] || "");
-      const cloth = String(row[4] || "");
-      const mv = overMoved(key);
-      const effSeries = mv && mv.cat ? mv.cat : String(row[1] || "");
-      if (series && effSeries !== series) continue;
-      if (q && !(lowerOf(shownName).includes(q) || lowerOf(aliases).includes(q) || lowerOf(app).includes(q) || lowerOf(effSeries).includes(q) || lowerOf(cloth).includes(q))) continue;
-      push({ key, tag: shownName, cn: aliases, mid: app, kind: "chars", lib, cat: effSeries, sub: "", series: effSeries, appearance: app, clothing: cloth });
-    }
-    for (const add of tagOver.added[keySeries(series)] || []) {
-      const key = keyChar(add.t);
-      if (overIsRemoved(key)) continue;
-      if (q && !lowerOf(add.t).includes(q)) continue;
-      push({ key, tag: add.t, cn: add.cn || "", mid: add.app || "", kind: "chars", lib, cat: series, series, appearance: add.app || "", clothing: add.cloth || "" });
+    // 多选：点亮多个作品系列时，角色列表 = 这些系列角色的并集
+    const seriesNames = Array.from(tagLib.seriesSel);
+    for (const series of seriesNames) {
+      const rows = (tagLib.charsBySeries && tagLib.charsBySeries.get(series)) || [];
+      for (const row of rows) {
+        const name = String(row[0] || "");
+        const key = keyChar(name);
+        if (overIsRemoved(key)) continue;
+        const rn = overRename(key);
+        const shownName = rn && rn.t ? rn.t : name;
+        const aliases = rn && rn.cn ? rn.cn : String(row[2] || "");
+        const app = String(row[3] || "");
+        const cloth = String(row[4] || "");
+        const mv = overMoved(key);
+        const effSeries = mv && mv.cat ? mv.cat : String(row[1] || "");
+        if (effSeries !== series) continue;
+        if (q && !(lowerOf(shownName).includes(q) || lowerOf(aliases).includes(q) || lowerOf(app).includes(q) || lowerOf(effSeries).includes(q) || lowerOf(cloth).includes(q))) continue;
+        push({ key, tag: shownName, cn: aliases, mid: app, kind: "chars", lib, cat: effSeries, sub: "", series: effSeries, appearance: app, clothing: cloth });
+      }
+      for (const add of tagOver.added[keySeries(series)] || []) {
+        const key = keyChar(add.t);
+        if (overIsRemoved(key)) continue;
+        if (q && !lowerOf(add.t).includes(q)) continue;
+        push({ key, tag: add.t, cn: add.cn || "", mid: add.app || "", kind: "chars", lib, cat: series, series, appearance: add.app || "", clothing: add.cloth || "" });
+      }
     }
     return out;
   }
@@ -10517,8 +10844,12 @@ const tagRows = () => {
     const id = lib.slice(4);
     const found = libById(id);
     if (!found) return out;
-    const prefix = libPrefix();
-    for (const row of libLeafRows(found, prefix)) {
+    const levels = libLevelsOf(found);
+    // 多选：按最深的已点亮层级过滤；只点亮一级分类时，最底层显示它下面的全部标签
+    const roots = libSelDeepPaths();
+    for (const row of found.tags || []) {
+      if (row.p.length !== levels - 1) continue;
+      if (roots.length && !roots.some((prefix) => pathUnder(row.p, prefix))) continue;
       const key = libTagKey(id, row.p, row.t);
       if (overIsRemoved(key)) continue;
       const rn = overRename(key);
@@ -10529,36 +10860,51 @@ const tagRows = () => {
     }
     return out;
   }
-  // 内置标签库：三级（分类 → 子分类 → 标签）
-  const group = (tagLib.groups || []).find((g) => String(g.n || "") === tagLib.cat);
-  const subs = group && Array.isArray(group.s) ? group.s : [];
+  // 内置标签库：三级（分类 → 子分类 → 标签），每一级都支持多选点亮
+  const groups = tagLib.groups || [];
+  const catNames = tagLib.catSel.size
+    ? Array.from(tagLib.catSel)
+    : groups.map((group) => String(group.n || "")).filter(Boolean);
+  const subKeys = tagLib.subSel;
   let limit = 6000;
-  for (const sub of subs) {
-    const subName = String(sub.n || "");
-    if (overIsRemoved(keySub("tags", tagLib.cat, subName))) continue;
-    if (tagLib.sub && subName !== tagLib.sub) continue;
-    for (const item of sub.t || []) {
-      const tag = String(item[0] || "");
-      const key = keyTag("tags", tagLib.cat, subName, tag);
-      if (overIsRemoved(key)) continue;
-      const rn = overRename(key);
-      const shownTag = rn && rn.t ? rn.t : tag;
-      const cn = rn && rn.cn ? rn.cn : String(item[1] || "");
-      const mv = overMoved(key);
-      const effCat = mv && mv.cat ? mv.cat : tagLib.cat;
-      const effSub = mv && mv.sub ? mv.sub : subName;
-      if (tagLib.sub && effSub !== tagLib.sub) continue;
-      if (q && !(lowerOf(shownTag).includes(q) || lowerOf(cn).includes(q))) continue;
-      push({ key: keyTag("tags", effCat, effSub, tag), tag: shownTag, cn, mid: effSub, kind: "tags", lib: "tags", cat: effCat, sub: effSub });
-      limit -= 1;
-      if (limit <= 0) return out;
+  for (const catName of catNames) {
+    const group = groups.find((g) => String(g.n || "") === catName);
+    if (!group) continue;
+    const subs = Array.isArray(group.s) ? group.s : [];
+    for (const sub of subs) {
+      const subName = String(sub.n || "");
+      if (!subName) continue;
+      if (overIsRemoved(keySub("tags", catName, subName))) continue;
+      if (subKeys.size && !subKeys.has(tagSubKey(catName, subName))) continue;
+      for (const item of sub.t || []) {
+        const tag = String(item[0] || "");
+        const key = keyTag("tags", catName, subName, tag);
+        if (overIsRemoved(key)) continue;
+        const rn = overRename(key);
+        const shownTag = rn && rn.t ? rn.t : tag;
+        const cn = rn && rn.cn ? rn.cn : String(item[1] || "");
+        const mv = overMoved(key);
+        const effCat = mv && mv.cat ? mv.cat : catName;
+        const effSub = mv && mv.sub ? mv.sub : subName;
+        if (subKeys.size && !subKeys.has(tagSubKey(effCat, effSub))) continue;
+        if (q && !(lowerOf(shownTag).includes(q) || lowerOf(cn).includes(q))) continue;
+        push({ key: keyTag("tags", effCat, effSub, tag), tag: shownTag, cn, mid: effSub, kind: "tags", lib: "tags", cat: effCat, sub: effSub });
+        limit -= 1;
+        if (limit <= 0) return out;
+      }
     }
   }
-  if (tagLib.sub) {
-    for (const add of tagOver.added[keySub("tags", tagLib.cat, tagLib.sub)] || []) {
-      const key = keyTag("tags", tagLib.cat, tagLib.sub, add.t);
+  const addedSubs = subKeys.size
+    ? Array.from(subKeys).map((key) => tagSubPair(key))
+    : Array.from(tagLib.catSel).map((catName) => [catName, "未分类"]);
+  for (const pair of addedSubs) {
+    const catName = pair[0];
+    const subName = pair[1];
+    if (!catName || !subName) continue;
+    for (const add of tagOver.added[keySub("tags", catName, subName)] || []) {
+      const key = keyTag("tags", catName, subName, add.t);
       if (overIsRemoved(key)) continue;
-      push({ key, tag: add.t, cn: add.cn || "", mid: tagLib.sub, kind: "tags", lib: "tags", cat: tagLib.cat, sub: tagLib.sub });
+      push({ key, tag: add.t, cn: add.cn || "", mid: subName, kind: "tags", lib: "tags", cat: catName, sub: subName });
     }
   }
   return out;
@@ -10630,10 +10976,12 @@ const tagLibDeleteKeys = (keys) => {
         const target = parsed.path;
         found.cats = (found.cats || []).filter((c) => !pathUnder(c.p, target));
         found.tags = (found.tags || []).filter((row) => !pathUnder(row.p, target));
-        const selNow = libPrefix();
-        if (selNow.length >= target.length && pathUnder(selNow, target)) {
-          tagLib.sel = selNow.slice(0, Math.max(0, target.length - 1));
+        const setNow = libSelSet();
+        for (const key of Array.from(setNow)) {
+          const parsed = tagLibKeyParse(key);
+          if (parsed && parsed.path.length >= target.length && pathUnder(parsed.path, target)) setNow.delete(key);
         }
+        syncTagLegacy();
       } else if (parsed.kind === "tag") {
         found.tags = (found.tags || []).filter((row) => !(pathSame(row.p, parsed.path) && row.t === parsed.tag));
       }
@@ -10642,10 +10990,15 @@ const tagLibDeleteKeys = (keys) => {
     tagOver.removed[item] = 1;
     const p2 = item.split("|");
     if (p2[0] === "tags") {
-      if (p2[1] === "cat" && tagLib.cat === p2[2]) { tagLib.cat = ""; tagLib.sub = ""; }
-      if (p2[1] === "sub" && tagLib.sub === p2[3]) tagLib.sub = "";
+      if (p2[1] === "cat") {
+        tagLib.catSel.delete(p2[2]);
+        for (const key of Array.from(tagLib.subSel)) {
+          if (tagSubPair(key)[0] === p2[2]) tagLib.subSel.delete(key);
+        }
+      }
+      if (p2[1] === "sub") tagLib.subSel.delete(tagSubKey(p2[2], p2[3]));
     }
-    if (p2[0] === "chars" && p2[1] === "series" && tagLib.series === p2[2]) tagLib.series = "";
+    if (p2[0] === "chars" && p2[1] === "series") tagLib.seriesSel.delete(p2[2]);
     // 自己新增出来的对象：从「新增记录」里真删掉，否则只打隐藏标记它还会被重新列出来
     const added = tagOver.added || {};
     const nameOf = (entry) => String(entry && (entry.t || entry.name) || "");
@@ -10675,6 +11028,7 @@ const tagLibDeleteKeys = (keys) => {
       tagOver.fav = (tagOver.fav || []).filter((entry) => nameOf(entry) !== p2[2]);
     }
   }
+  syncTagLegacy();
   saveTagOver();
   if (tagLibSel && tagLibSel.size) tagLibSel.clear();
   renderTagLib();
@@ -10937,7 +11291,11 @@ const openTagMoveDialog = (keys, label) => {
           tagOver.removed[item] = 1;
         }
       }
-      tagLib.sel = path.slice(0, Math.max(0, libLevelsOf(found) - 1));
+      const deepPath = path.slice(0, Math.max(0, libLevelsOf(found) - 1));
+      const moveSet = libSelSet();
+      moveSet.clear();
+      if (deepPath.length) moveSet.add(libCatKey(found.id, deepPath));
+      syncTagLegacy();
     } else if (target === "chars") {
       const series = path[0] || "";
       if (!series) { showToast("要选一个作品系列"); return; }
@@ -10952,7 +11310,8 @@ const openTagMoveDialog = (keys, label) => {
         tagOver.added["chars|series"] = seriesList;
         tagOver.removed[item] = 1;
       }
-      tagLib.series = series;
+      tagLib.seriesSel.add(series);
+      syncTagLegacy();
     } else {
       const cat = path[0] || "";
       const sub = path[1] || "";
@@ -10962,8 +11321,9 @@ const openTagMoveDialog = (keys, label) => {
         if (!src) continue;
         tagOver.moved[item] = { cat, sub, lib: target };
       }
-      tagLib.cat = cat;
-      tagLib.sub = sub;
+      tagLib.catSel.add(cat);
+      if (sub) tagLib.subSel.add(tagSubKey(cat, sub));
+      syncTagLegacy();
     }
     saveTagOver();
     tagLibSel.clear();
@@ -11146,39 +11506,45 @@ const tagLibAddDialog = (lib, cat, sub) => {
           series.push({ t: target });
           tagOver.added["chars|series"] = series;
         }
-        tagLib.series = target;
+        tagLib.seriesSel.add(target);
+        syncTagLegacy();
       } else if (found) {
         if (!Array.isArray(found.tags)) found.tags = [];
         found.tags.push({ p: prefix.slice(0), t: name, cn });
-        tagLib.sel = prefix.slice(0);
+        if (prefix.length) libSelSet().add(libCatKey(found.id, prefix));
+        syncTagLegacy();
       } else if (cat) {
         const bucket = tagOver.added[keySub("tags", cat, sub || "未分类")] || [];
         bucket.push({ t: name, cn });
         tagOver.added[keySub("tags", cat, sub || "未分类")] = bucket;
-        tagLib.sub = sub || "未分类";
+        tagLib.subSel.add(tagSubKey(cat, sub || "未分类"));
+        syncTagLegacy();
       } else {
         const bucket = tagOver.added["tags|cat|未分类"] || [];
         bucket.push({ t: name, cn });
         tagOver.added["tags|cat|未分类"] = bucket;
-        tagLib.cat = "未分类";
+        tagLib.catSel.add("未分类");
+        syncTagLegacy();
       }
     } else if (lib === "chars") {
       const series = tagOver.added["chars|series"] || [];
       if (!series.some((item) => item.t === name)) series.push({ t: name });
       tagOver.added["chars|series"] = series;
       tagLib.lib = "chars";
-      tagLib.series = name;
+      tagLib.seriesSel.add(name);
+      syncTagLegacy();
     } else if (found) {
       if (!Array.isArray(found.cats)) found.cats = [];
       found.cats.push({ p: prefix.concat(name) });
-      tagLib.sel = prefix.concat(name);
+      libSelSet().add(libCatKey(found.id, prefix.concat(name)));
+      syncTagLegacy();
     } else {
       const bucket = tagOver.added["tags|cat|"] || [];
       if (!bucket.some((item) => item.t === name)) bucket.push({ t: name });
       tagOver.added["tags|cat|"] = bucket;
       tagLib.lib = "tags";
-      tagLib.cat = name;
-      tagLib.sub = "";
+      tagLib.catSel.add(name);
+      syncTagLegacy();
     }
     saveTagOver();
     close();
@@ -11340,12 +11706,18 @@ const tagLibKeyParse = (key) => {
   return { id, kind, path: idx < 0 ? [] : body.slice(0, idx).split(LSEP).filter(Boolean), tag: body.slice(idx + 1) };
 };
 
-const tagLibCatRow = (items, label, activeName, onPick, level) => {
+const tagLibCatRow = (items, label, active, onPick, level) => {
   const wrap = el("div", "yx-tag-crow yx-tag-" + level);
   wrap.appendChild(el("span", "yx-tag-lvlab yx-tag-" + level + "lab", label));
   const body = el("div", "yx-tag-cwrap");
+  // active 可以是：字符串（旧用法）/ 函数（多选判断）/ Set —— 多选时同一行允许多个 chip 同时点亮
+  const isActive = (item) => {
+    if (typeof active === "function") return !!active(item);
+    if (active instanceof Set) return active.has(item.key) || active.has(item.name);
+    return !!active && item.name === active;
+  };
   for (const item of items) {
-    const chip = tagLibChip(item.show || item.name, item.count, item.name === activeName, () => onPick(item.name, item), { key: item.key, path: item.path, level });
+    const chip = tagLibChip(item.show || item.name, item.count, isActive(item), () => onPick(item.name, item), { key: item.key, path: item.path, level });
     if (item.key && tagLibSel.size) {
       if (tagLibSel.has(item.key)) chip.classList.add("yx-tag-sel-on");
       if (tagLibParentOn(item.key)) chip.classList.add("yx-tag-lv2chip-parent-on");
@@ -11454,10 +11826,15 @@ const tagLibEditChip = (item, level) => {
         for (const row of found.tags || []) {
           if (pathUnder(row.p, oldPath)) row.p = nextPath.concat(row.p.slice(oldPath.length));
         }
-        const selNow = libPrefix();
-        if (selNow.length >= oldPath.length && pathUnder(selNow, oldPath)) {
-          tagLib.sel = nextPath.concat(selNow.slice(oldPath.length));
+        const setNow = libSelSet();
+        for (const key of Array.from(setNow)) {
+          const parsed = tagLibKeyParse(key);
+          if (!parsed || !parsed.path.length) continue;
+          if (parsed.path.length < oldPath.length || !pathUnder(parsed.path, oldPath)) continue;
+          setNow.delete(key);
+          setNow.add(libCatKey(found.id, nextPath.concat(parsed.path.slice(oldPath.length))));
         }
+        syncTagLegacy();
       }
     }
     saveTagOver();
@@ -11625,7 +12002,12 @@ const tagGridMore = () => {
 
 const tagLibCountLabel = () => {
   const lib = tagLib.lib;
-  if (lib === "chars") return tagLib.series ? "角色（" + tagLib.series + "）" : "角色";
+  if (lib === "chars") {
+    const n = tagLib.seriesSel.size;
+    if (!n) return "角色（先点上面的作品系列，可多选）";
+    if (n === 1) return "角色（" + Array.from(tagLib.seriesSel)[0] + "）";
+    return "角色（已点亮 " + n + " 个系列）";
+  }
   if (lib === "mine") return "收藏内容";
   if (lib.startsWith("lib:")) return "标签";
   return "三级内容";
@@ -11671,18 +12053,30 @@ const renderTagLib = () => {
     const levelName = (depth) => (depth === 1 ? "一级分类" : depth === 2 ? "二级分类" : depth === 3 ? "三级分类" : "第 " + depth + " 级分类");
     if (found) {
       const levels = libLevelsOf(found);
-      const sel = libPrefix();
+      const selSet = libSelSet();
+      const selectedPaths = libSelPathsOf(selSet);
       if (levels > 1) {
         let shownRow = false;
         for (let depth = 1; depth <= levels - 1; depth += 1) {
-          const prefix = sel.slice(0, depth - 1);
-          const items = libCatItems(found, depth, prefix);
+          // 多选：这一层显示「更浅一层已点亮项下面」的全部分类（同级已点亮的兄弟项保持可见，才能继续点其它项）；更浅一层都没点亮就显示这一层全部
+          const shallower = selectedPaths.filter((prefix) => prefix.length < depth);
+          const items = (found.cats || [])
+            .filter((cat) => cat.p.length === depth && (!shallower.length || shallower.some((prefix) => pathUnder(cat.p, prefix))))
+            .map((cat) => ({ key: libCatKey(found.id, cat.p), name: cat.p[cat.p.length - 1], count: libTagCount(found, cat.p), path: cat.p }));
           if (!items.length) break;
-          const active = sel.length >= depth ? sel[depth - 1] : "";
-          dom.lv1.appendChild(tagLibCatRow(items, levelName(depth), active, (name) => {
-            const hit = items.find((it) => it.name === name);
-            if (!hit) return;
-            tagLib.sel = hit.path.slice(0, depth);
+          dom.lv1.appendChild(tagLibCatRow(items, levelName(depth), (item) => selSet.has(item.key), (name, item) => {
+            const set = libSelSet();
+            if (set.has(item.key)) {
+              set.delete(item.key);
+              // 取消一项时，把它下面的已点亮项一起取消
+              for (const key of Array.from(set)) {
+                const parsed = tagLibKeyParse(key);
+                if (parsed && parsed.path.length > item.path.length && pathUnder(parsed.path, item.path)) set.delete(key);
+              }
+            } else {
+              set.add(item.key);
+            }
+            syncTagLegacy();
             renderTagLib();
           }, depth === 1 ? "lv1" : "lv2"));
           shownRow = true;
@@ -11697,16 +12091,32 @@ const renderTagLib = () => {
     const mineSeries = new Set((tagOver.added["chars|series"] || []).map((item) => String(item.t || "")));
     const custom = items.filter((item) => mineSeries.has(item.name));
     const shown = items.filter((item) => !mineSeries.has(item.name)).slice(0, 400).concat(custom);
-    dom.lv1.appendChild(tagLibCatRow(shown, "作品系列", tagLib.series, (name) => { tagLib.series = name; renderTagLib(); }, "lv1"));
+    dom.lv1.appendChild(tagLibCatRow(shown, "作品系列", (item) => tagLib.seriesSel.has(item.name), (name) => {
+      toggleInSet(tagLib.seriesSel, name);
+      syncTagLegacy();
+      renderTagLib();
+    }, "lv1"));
     if (items.length > shown.length) dom.lv1.appendChild(el("span", "yx-tag-note", "（系列太多，搜索框可以缩小范围；显示前 " + shown.length + " 个）"));
   } else {
     const items = lv1List();
-    if (!tagLib.cat && items.length) tagLib.cat = items[0].name;
-    dom.lv1.appendChild(tagLibCatRow(items, "一级分类", tagLib.cat, (name) => { tagLib.cat = name; tagLib.sub = ""; renderTagLib(); }, "lv1"));
+    dom.lv1.appendChild(tagLibCatRow(items, "一级分类", (item) => tagLib.catSel.has(item.name), (name) => {
+      if (tagLib.catSel.has(name)) {
+        tagLib.catSel.delete(name);
+        // 取消一级分类时，把它下面的已点亮子分类一起取消
+        for (const key of Array.from(tagLib.subSel)) {
+          if (tagSubPair(key)[0] === name) tagLib.subSel.delete(key);
+        }
+      } else {
+        tagLib.catSel.add(name);
+      }
+      syncTagLegacy();
+      renderTagLib();
+    }, "lv1"));
     lv2 = lv2List();
     if (lv2.length) {
-      dom.lv2.appendChild(tagLibCatRow(lv2, "二级分类", tagLib.sub, (name) => {
-        tagLib.sub = tagLib.sub === name ? "" : name;
+      dom.lv2.appendChild(tagLibCatRow(lv2, "二级分类", (item) => tagLib.subSel.has(tagSubKey(item.cat, item.name)), (name, item) => {
+        toggleInSet(tagLib.subSel, tagSubKey(item.cat, item.name));
+        syncTagLegacy();
         renderTagLib();
       }, "lv2"));
     }
@@ -11788,8 +12198,7 @@ const openLibMenu = (libId, x, y) => {
     editorPushUndo();
     saveTagOver();
     tagLib.lib = "lib:" + copy.id;
-    tagLib.cat = "";
-    tagLib.sel = [];
+    syncTagLegacy();
     tagLibRefreshHeader();
     renderTagLib();
     showToast("已复制为同名库");
@@ -11798,7 +12207,7 @@ const openLibMenu = (libId, x, y) => {
     tagOver.libs = (tagOver.libs || []).filter((lib) => lib.id !== libId);
     editorPushUndo();
     saveTagOver();
-    if (tagLib.lib === "lib:" + libId) { tagLib.lib = "tags"; tagLib.cat = ""; tagLib.sel = []; }
+    if (tagLib.lib === "lib:" + libId) { tagLib.lib = "tags"; syncTagLegacy(); }
     tagLibRefreshHeader();
     renderTagLib();
     showToast("已删除该库");
@@ -11867,11 +12276,8 @@ const tagLibRefreshHeader = () => {
 };
 
 const tagLibPick = (id) => {
+  // 切库只换当前库，各级点亮的筛选状态都保留（切回来还是原样）
   tagLib.lib = id;
-  tagLib.cat = "";
-  tagLib.sub = "";
-  tagLib.sel = [];
-  tagLib.series = "";
   tagLib.q = "";
   if (tagLib.dom && tagLib.dom.search) tagLib.dom.search.value = "";
   if (id === "tags") loadTagLib();
@@ -12749,8 +13155,7 @@ const bkImportDb = async (file, target) => {
     } else {
       tagOver.libs.push(lib);
       tagLib.lib = "lib:" + lib.id;
-      tagLib.cat = lib.cats[0].name;
-      tagLib.sub = "";
+      syncTagLegacy();
       showToast("已导入 " + lib.cats.length + " 个分类、" + res.total + " 个标签（页签最右边）");
     }
     saveTagOver();
