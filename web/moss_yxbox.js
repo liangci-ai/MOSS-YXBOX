@@ -5958,27 +5958,31 @@ function setup(node) {
   };
 
   // LiteGraph 里 input.link 是「连线 id（数字）」，连线对象在 graph.links[id]；
-  // 某些新版前端直接把连线对象挂在 input.link 上，所以两种都兼容
-  const linkOriginId = (slot) => {
+  // 某些新版前端直接把连线对象挂在 input.link 上，所以两种都兼容。
+  // 返回 { id: 上游节点 id, slot: 上游输出口下标 }：宽 / 高接的是哪个口，
+  // 比「上游第几个数字参数」可信得多，宽高接反了也能纠正。
+  const linkOrigin = (slot) => {
     const link = slot?.link;
     if (link == null) return null;
-    if (typeof link === "object") {
-      const id = Number(link.origin_id);
-      return Number.isFinite(id) ? id : null;
-    }
-    const graphs = [node.graph, app?.graph].filter(Boolean);
-    let record = null;
-    for (const graph of graphs) {
+    const take = (record) => {
+      const id = Number(record?.origin_id);
+      if (!Number.isFinite(id)) return null;
+      const at = Number(record?.origin_slot);
+      return { id, slot: Number.isFinite(at) ? at : null };
+    };
+    if (typeof link === "object") return take(link);
+    for (const graph of [node.graph, app?.graph].filter(Boolean)) {
       const table = graph?.links || graph?._links;
-      if (Array.isArray(table)) record = record || table[link] || null;
-      else if (table && typeof table.get === "function") record = record || table.get(link) || null;
-      else if (table && typeof table === "object") record = record || table[link] || null;
+      let record = null;
+      if (Array.isArray(table)) record = table[link] || null;
+      else if (table && typeof table.get === "function") record = table.get(link) || null;
+      else if (table && typeof table === "object") record = table[link] || null;
       if (!record) record = graph?.getLink?.(link) || null;
-      if (record) break;
+      if (record) return take(record);
     }
-    const id = Number(record?.origin_id);
-    return Number.isFinite(id) ? id : null;
+    return null;
   };
+  const linkOriginId = (slot) => linkOrigin(slot)?.id ?? null;
 
   // ------------------------------------------------- 外部接入的画布尺寸
   // 「画布宽 / 画布高 / 画布缩放长度」一旦被转成输入接了上游，ComfyUI 只把上游的值送进后端，
@@ -6015,15 +6019,53 @@ function setup(node) {
     }
     return null;
   };
-  // position：上游没有能识别的参数名时，按「宽在前、高在后」的顺序兜底
-  // （大多数「预设分辨率」节点就是这么摆的）
+  // JS 的 Math.round 遇到 .5 一律进位，Python 的 round 是「四舍六入五成双」。
+  // 要和后端真正执行出来的 width / height 逐像素一致，这里按 Python 来。
+  const roundHalfToEven = (value) => {
+    const low = Math.floor(value);
+    return value - low === 0.5 ? (low % 2 === 0 ? low : low + 1) : Math.round(value);
+  };
+  // 「分辨率选择器」（核心节点 ResolutionSelector）：宽高是后端算出来的两个输出，
+  // 节点身上只有宽高比 / 百万像素 / 倍数三个参数，没有一个现成的像素值可读 ——
+  // 前端也拿不到纯数据输出（后端只回传 ui 输出）。所以只能照它自己的公式复算。
+  const resolutionSelectorSize = (widgets) => {
+    const value = (name) => widgets.find((w) => String(w?.name || "") === name)?.value;
+    const ratio = /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/.exec(String(value("aspect_ratio") ?? ""));
+    const mega = Number(value("megapixels"));
+    const multiple = Number(value("multiple"));
+    if (!ratio || !(mega > 0) || !(multiple > 0)) return null;
+    const rw = Number(ratio[1]);
+    const rh = Number(ratio[2]);
+    if (!(rw > 0) || !(rh > 0)) return null;
+    const scale = Math.sqrt(mega * 1024 * 1024 / (rw * rh));
+    return [
+      roundHalfToEven(rw * scale / multiple) * multiple,
+      roundHalfToEven(rh * scale / multiple) * multiple,
+    ];
+  };
+  // 宽高只存在于输出口的节点：类型 -> 算法。以后再来一个尺寸选择器加一行就够。
+  const SIZE_ALGOS = new Map([["ResolutionSelector", resolutionSelectorSize]]);
+  // 输出口名字：认出来就以它为准，宽接成高、高接成宽也能纠正
+  const OUT_WIDTH_NAMES = new Set(["width", "w", "宽", "宽度"]);
+  const OUT_HEIGHT_NAMES = new Set(["height", "h", "高", "高度"]);
+
+  // pick：要哪个方向。默认按调用方给的位置（0 宽 / 1 高 / null 长度）；
+  // 线接的上游输出口叫 width / height 时以输出口为准。
   const linkedInt = (slot, names, position) => {
     if (!slot || slot.link == null) return null;
-    const originId = linkOriginId(slot);
-    if (originId == null) return null;
-    const origin = (node.graph || app.graph)?.getNodeById?.(originId);
-    if (!origin || origin === node) return null;
-    const widgets = (origin.widgets || []).filter(Boolean);
+    const origin = linkOrigin(slot);
+    if (!origin) return null;
+    const up = (node.graph || app.graph)?.getNodeById?.(origin.id);
+    if (!up || up === node) return null;
+    const widgets = (up.widgets || []).filter(Boolean);
+    const outName = String(up.outputs?.[origin.slot]?.name || "").trim().toLowerCase();
+    const pick = OUT_HEIGHT_NAMES.has(outName) ? 1 : OUT_WIDTH_NAMES.has(outName) ? 0 : position;
+    // 0) 「算尺寸」节点：照它自己的公式复算，和点运行拿到的值一致
+    const algo = SIZE_ALGOS.get(String(up.type ?? up.comfyClass ?? ""));
+    if (algo) {
+      const size = algo(widgets);
+      if (size) return pick === 1 ? size[1] : pick === 0 ? size[0] : Math.max(size[0], size[1]);
+    }
     // 1) 参数名直接对得上（宽 / 宽度 / 高 / 高度 / 长度 …）
     for (const w of widgets) {
       const name = String(w.name || "").trim().toLowerCase();
@@ -6038,13 +6080,14 @@ function setup(node) {
       if (!size) continue;
       const swapped = widgets.some((item) => /互换|交换|swap/i.test(String(item?.name || "")) && !!item.value);
       const pair = swapped ? [size[1], size[0]] : size;
-      if (position === 0) return pair[0];
-      if (position === 1) return pair[1];
+      if (pick === 0) return pair[0];
+      if (pick === 1) return pair[1];
       return Math.max(pair[0], pair[1]);
     }
-    // 3) 顺序兜底：只有一 / 两个数字参数时按先后取（布尔开关不算数字参数）
+    // 3) 整个节点只有一个数字参数（INT 原语 / Primitive 之类）：就是它。
+    //    不按「两个数字的先后」猜 —— 分辨率选择器这种参数比输出多的节点会被猜成
+    //    megapixels / multiple，夹到 16 下限上就是 16×16。
     const values = widgets.map(widgetInt).filter((value) => value != null);
-    if (position != null && values.length === 2) return values[position];
     if (values.length === 1) return values[0];
     return null;
   };
