@@ -2165,7 +2165,7 @@ function setup(node) {
   // 给它一个固定的收口，列表区滚到底时不再是「突然被切断」的样子。
   // 版本号不再写死在 JS 里（发版时最容易忘改）：先显示兜底串，随即向本插件后端
   // 的 /moss_yxbox/version 取「实际安装版本」覆盖它——改 pyproject.toml 后刷新页面即生效。
-  const STATUS_VERSION_FALLBACK = "1.1.0";
+  const STATUS_VERSION_FALLBACK = "1.1.1";
   const statusBar = el("div", "yx-statusbar");
   const sbLeft = el("div", "yx-sb-group");
   const sbRight = el("div", "yx-sb-group");
